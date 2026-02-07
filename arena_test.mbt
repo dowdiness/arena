@@ -1,20 +1,111 @@
 ///|
-test "fib" {
-  let array = [1, 2, 3, 4, 5].map(fib)
-
-  // `inspect` is used to check the output of the function
-  // Just write `inspect(value)` and execute `moon test --update`
-  // to update the expected output, and verify them afterwards
-  inspect(array, content="[1, 2, 3, 5, 8]")
+test "Arena::alloc returns valid Refs" {
+  let arena = Arena::new(4, 8)
+  let r0 = arena.alloc()
+  let r1 = arena.alloc()
+  inspect(r0 is None, content="false")
+  inspect(r1 is None, content="false")
+  inspect(arena.is_valid(r0.unwrap()), content="true")
+  inspect(arena.is_valid(r1.unwrap()), content="true")
 }
 
 ///|
-test "sum" {
-  let array = [1, 2, 3, 4, 5]
-  inspect(sum(data=array), content="15")
-  inspect(sum(data=array, start=1), content="14")
-  inspect(sum(data=array, length=3), content="6")
-  let length = None
-  // Use `?` for punning
-  inspect(sum(data=array, length?), content="15")
+test "Arena::is_valid returns false after reset (stale ref detection)" {
+  let arena = Arena::new(4, 8)
+  let r0 = arena.alloc().unwrap()
+  inspect(arena.is_valid(r0), content="true")
+  arena.reset()
+  inspect(arena.is_valid(r0), content="false")
+}
+
+///|
+test "Arena::multiple alloc/reset cycles" {
+  let arena = Arena::new(4, 8)
+  let r0 = arena.alloc().unwrap()
+  inspect(arena.get_generation(), content="1")
+  arena.reset()
+  inspect(arena.get_generation(), content="2")
+  let r1 = arena.alloc().unwrap()
+  inspect(arena.is_valid(r0), content="false")
+  inspect(arena.is_valid(r1), content="true")
+  arena.reset()
+  inspect(arena.get_generation(), content="3")
+  inspect(arena.is_valid(r1), content="false")
+}
+
+///|
+test "Arena::alloc returns None at capacity" {
+  let arena = Arena::new(2, 8)
+  inspect(arena.alloc() is None, content="false")
+  inspect(arena.alloc() is None, content="false")
+  inspect(arena.alloc(), content="None")
+}
+
+///|
+test "Arena::slot_offset returns correct byte position" {
+  let arena = Arena::new(4, 16)
+  let r0 = arena.alloc().unwrap()
+  let r1 = arena.alloc().unwrap()
+  inspect(arena.slot_offset(r0), content="Some(0)")
+  inspect(arena.slot_offset(r1), content="Some(16)")
+}
+
+///|
+test "Arena::read/write int32 round-trip" {
+  let arena = Arena::new(4, 8)
+  let r = arena.alloc().unwrap()
+  inspect(arena.write_int32(r, 0, 42), content="true")
+  inspect(arena.read_int32(r, 0), content="Some(42)")
+  inspect(arena.write_int32(r, 4, -1), content="true")
+  inspect(arena.read_int32(r, 4), content="Some(-1)")
+}
+
+///|
+test "Arena::read/write double round-trip" {
+  let arena = Arena::new(4, 16)
+  let r = arena.alloc().unwrap()
+  inspect(arena.write_double(r, 0, 3.14), content="true")
+  inspect(arena.read_double(r, 0), content="Some(3.14)")
+  inspect(arena.write_double(r, 8, -0.5), content="true")
+  inspect(arena.read_double(r, 8), content="Some(-0.5)")
+}
+
+///|
+test "Arena::stale ref write returns false, read returns None" {
+  let arena = Arena::new(4, 8)
+  let r = arena.alloc().unwrap()
+  arena.reset()
+  inspect(arena.write_int32(r, 0, 42), content="false")
+  inspect(arena.read_int32(r, 0), content="None")
+  inspect(arena.write_double(r, 0, 1.0), content="false")
+  inspect(arena.read_double(r, 0), content="None")
+}
+
+///|
+test "Arena::field_offset bounds checking" {
+  let arena = Arena::new(4, 8)
+  let r = arena.alloc().unwrap()
+  // field_offset 8 with int32 (4 bytes) exceeds slot_size 8
+  inspect(arena.write_int32(r, 8, 42), content="false")
+  inspect(arena.read_int32(r, 8), content="None")
+  // field_offset 5 with int32 would read past slot end (5+4=9 > 8)
+  inspect(arena.write_int32(r, 5, 42), content="false")
+  inspect(arena.read_int32(r, 5), content="None")
+  // negative field_offset
+  inspect(arena.write_int32(r, -1, 42), content="false")
+  inspect(arena.read_int32(r, -1), content="None")
+  // double needs 8 bytes, only fits at offset 0 in slot_size=8
+  inspect(arena.write_double(r, 0, 1.0), content="true")
+  inspect(arena.write_double(r, 1, 1.0), content="false")
+  inspect(arena.read_double(r, 1), content="None")
+}
+
+///|
+test "Arena::get_count and get_max_slots" {
+  let arena = Arena::new(4, 8)
+  inspect(arena.get_count(), content="0")
+  inspect(arena.get_max_slots(), content="4")
+  arena.alloc() |> ignore
+  arena.alloc() |> ignore
+  inspect(arena.get_count(), content="2")
 }
