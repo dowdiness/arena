@@ -4,8 +4,11 @@ Based on the design in `memory-management-design.md` (§12).
 
 ## Current State
 
-The codebase contains placeholder functions (`fib`, `sum`) in a flat root package.
-No arena implementation exists yet. The module is `dowdiness/arena` (MoonBit, Apache-2.0).
+**Phase 1 is complete.** The core arena allocator is implemented in pure MoonBit
+with 33 tests passing. The module is `dowdiness/arena` (MoonBit, Apache-2.0).
+
+Implemented: `MbBump`, `MbGenStore`, `Ref`, `Arena` with typed read/write,
+generational stale-ref detection, O(1) reset, and comprehensive input validation.
 
 ---
 
@@ -33,13 +36,11 @@ Functions:
 - `MbBump::reset(self) -> Unit` — sets offset to 0
 - `MbBump::capacity(self) -> Int`
 - `MbBump::used(self) -> Int`
-- Byte-level read/write helpers:
-  - `MbBump::write_byte(self, offset: Int, val: Byte) -> Unit`
-  - `MbBump::read_byte(self, offset: Int) -> Byte`
-  - `MbBump::write_int32(self, offset: Int, val: Int) -> Unit`
-  - `MbBump::read_int32(self, offset: Int) -> Int`
-  - `MbBump::write_double(self, offset: Int, val: Double) -> Unit`
-  - `MbBump::read_double(self, offset: Int) -> Double`
+- Bounds-checked typed read/write helpers:
+  - `MbBump::write_int32(self, offset: Int, val: Int) -> Bool`
+  - `MbBump::read_int32(self, offset: Int) -> Int?`
+  - `MbBump::write_double(self, offset: Int, val: Double) -> Bool`
+  - `MbBump::read_double(self, offset: Int) -> Double?`
 
 Alignment: `alloc` rounds offset up to the next multiple of `align`.
 
@@ -82,9 +83,8 @@ struct Ref {
 }
 ```
 
-Functions:
-- `Ref::new(index: Int, generation: Int) -> Ref`
 - Derive `Eq` and `Show`
+- No public constructor; only `Arena::alloc` produces `Ref` values
 
 ### 1.4 Arena — Slot-based allocator with generation tracking
 
@@ -107,11 +107,11 @@ Functions:
 - `Arena::is_valid(self, ref: Ref) -> Bool` — validity predicate (§5.2)
 - `Arena::slot_offset(self, ref: Ref) -> Int?` — byte offset for valid ref, None if stale
 - `Arena::reset(self) -> Unit` — O(1) lazy invalidation (§5.5)
-- `Arena::generation(self) -> Int` — current generation
-- `Arena::count(self) -> Int` — allocated slot count
-- `Arena::capacity(self) -> Int` — max_slots
+- `Arena::get_generation(self) -> Int` — current generation
+- `Arena::get_count(self) -> Int` — allocated slot count
+- `Arena::get_max_slots(self) -> Int` — max_slots
 
-Raw byte access via slot_offset + MbBump read/write:
+Typed access (validates ref and bounds-checks field_offset):
 - `Arena::write_int32(self, ref: Ref, field_offset: Int, val: Int) -> Bool`
 - `Arena::read_int32(self, ref: Ref, field_offset: Int) -> Int?`
 - `Arena::write_double(self, ref: Ref, field_offset: Int, val: Double) -> Bool`
@@ -128,27 +128,42 @@ Tests:
 - Stale ref write returns false
 - Stale ref read returns None
 
-### 1.5 Cleanup
+### 1.5 Safety hardening (implemented)
 
-- Remove placeholder `fib` and `sum` from `arena.mbt`
-- Remove their tests from `arena_test.mbt`
-- Move MbBump, MbGenStore, Ref, Arena code into separate `.mbt` files in root package
-- Run `moon info && moon fmt`
+The Phase 1 implementation includes defensive checks beyond the original design:
 
-### Suggested file layout for Phase 1
+- **Overflow-safe alignment**: uses modulo-based padding instead of `(offset + align - 1) / align * align`
+- **Overflow-safe bounds checks**: `size > remaining` instead of `aligned + size > capacity`
+- **Input validation**: rejects non-positive size/align in `MbBump::alloc`, negative capacity in constructors
+- **Constructor overflow detection**: `Arena::new` detects `slot_count * slot_size` overflow, degrades to zero-capacity
+- **Field offset bounds**: Arena typed accessors reject offsets outside the slot (overflow-safe)
+- **Negative index guard**: `Arena::is_valid` rejects negative `Ref.index`
+- **Bump alloc failure propagation**: `Arena::alloc` checks `MbBump::alloc` result before committing
+- **Generation exhaustion**: `Arena::reset` aborts at `@int.max_value` rather than wrapping
+- **Bounds-checked typed accessors**: `MbBump` read/write return `Bool`/`Option` instead of panicking
+
+### 1.6 Cleanup (done)
+
+- Removed placeholder `fib` and `sum` from `arena.mbt`
+- Removed their tests from `arena_test.mbt`
+- Moved MbBump, MbGenStore, Ref, Arena code into separate `.mbt` files in root package
+- Ran `moon info && moon fmt`
+
+### File layout (Phase 1)
 
 ```
 arena/
-├── mb_bump.mbt          # MbBump struct and methods
-├── mb_bump_test.mbt     # MbBump tests
-├── mb_gen_store.mbt     # MbGenStore struct and methods
+├── mb_bump.mbt           # MbBump struct and methods
+├── mb_bump_test.mbt      # MbBump tests
+├── mb_gen_store.mbt      # MbGenStore struct and methods
 ├── mb_gen_store_test.mbt # MbGenStore tests
-├── ref.mbt              # Ref struct
-├── arena.mbt            # Arena struct and methods (replaces placeholder)
-├── arena_test.mbt       # Arena tests (replaces placeholder)
+├── ref.mbt               # Ref struct
+├── arena.mbt             # Arena struct and methods
+├── arena_test.mbt        # Arena blackbox tests
+├── arena_wbtest.mbt      # Arena whitebox tests (internal invariants)
 ├── moon.pkg.json
 └── cmd/main/
-    ├── main.mbt
+    ├── main.mbt          # Arena usage demo
     └── moon.pkg.json
 ```
 
@@ -291,5 +306,8 @@ Low priority. Implement as needed.
 |----------|--------|-----------|
 | Phase 1 package structure | Flat (root package) | Simplest start; refactor when second backend requires it |
 | Phase 1 backend | MbBump only (no traits) | No abstraction needed without a second implementation |
-| invalidate_all on reset | Lazy (§5.5) | O(1) reset is critical for DSP; no practical generation overflow risk |
+| invalidate_all on reset | Lazy (§5.5) | O(1) reset is critical for DSP |
+| Generation overflow | Abort at max_value | Wrapping reuses generation values, breaking stale-ref safety; 2^31 resets is unreachable in practice |
+| Typed accessor return types | Bool/Option (not Unit/bare) | Public API must not panic on bad offsets; recoverable failure via return values |
+| Alignment arithmetic | Modulo-based padding | `(offset + align - 1) / align * align` overflows for large align values |
 | TypedArena pattern | Pattern A (manual specialization) | Simple, optimizable; boilerplate acceptable for 2-3 types |

@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A MoonBit arena allocator library (`dowdiness/arena`) designed for manual memory management in domains where MoonBit's default Perceus (reference-counting) GC is insufficient: real-time DSP, parsers, CRDTs, and incremental computation. The project is in early stages — currently contains placeholder functions (`fib`, `sum`) with the arena implementation planned per the design documents.
+A MoonBit arena allocator library (`dowdiness/arena`) designed for manual memory management in domains where MoonBit's default Perceus (reference-counting) GC is insufficient: real-time DSP, parsers, CRDTs, and incremental computation.
+
+**Phase 1 is complete**: a working arena allocator with generational indices in pure MoonBit (no C-FFI), backed by `FixedArray[Byte]`, running on all backends (wasm-gc, JS, native). See `ROADMAP.md` for implementation status and next phases.
 
 ## Build & Development Commands
 
@@ -30,25 +32,30 @@ Use `moon coverage analyze > uncovered.log` to check test coverage.
 - Labelled arguments use `~` syntax (e.g., `data~`). Optional labelled arguments use `?` with defaults (e.g., `start? : Int = 0`). Punning with `?` is idiomatic (e.g., `sum(data=array, length?)`).
 - Keep deprecated code in `deprecated.mbt` files.
 
-## Architecture (Planned)
+## Architecture
 
 The library follows a 3-layer architecture with an additional domain layer on top:
 
-- **Layer 1 (Physical Memory)**: `BumpAllocator` trait with two implementations — `MbBump` (FixedArray[Byte], all backends) and `CFFIBump` (C malloc, native only, GC-free)
-- **Layer 2 (Generic Arena)**: `Arena` struct with generational indices (`Ref`) for use-after-reset detection. `GenStore` trait for per-slot generation tracking. Reset is O(1) via lazy invalidation.
-- **Layer 3 (Typed Arena)**: `Storable` trait for fixed-size serialization. `TypedRef[T]` phantom-typed references. Manual specialization pattern (e.g., `F64Arena`, `AudioArena`) since MoonBit lacks bounded type parameters on structs.
-- **Domain Layer**: `AudioBufferPool` (DSP), `ASTArena` (parser), `CRDTOpPool`, `MemoTable` (incr)
+- **Layer 1 (Physical Memory)** [Phase 1: implemented]: `MbBump` — bump allocator backed by `FixedArray[Byte]` with overflow-safe alignment and bounds-checked typed read/write. Future: `BumpAllocator` trait + `CFFIBump` (C malloc, native only).
+- **Layer 2 (Generic Arena)** [Phase 1: implemented]: `Arena` struct with generational indices (`Ref`) for use-after-reset detection. `MbGenStore` for per-slot generation tracking. Reset is O(1) via lazy invalidation. Future: `GenStore` trait + C backend.
+- **Layer 3 (Typed Arena)** [Phase 3: planned]: `Storable` trait for fixed-size serialization. `TypedRef[T]` phantom-typed references. Manual specialization pattern (e.g., `F64Arena`, `AudioArena`) since MoonBit lacks bounded type parameters on structs.
+- **Domain Layer** [Phase 4: planned]: `AudioBufferPool` (DSP), `ASTArena` (parser), `CRDTOpPool`, `MemoTable` (incr)
 
-Backend switching uses enum dispatch (`BumpImpl`, `GenStoreImpl`) with constructor variants `Arena::new_debug` (all MoonBit), `Arena::new_release` (all C-FFI), `Arena::new_hybrid`.
+Backend switching (Phase 2) will use enum dispatch (`BumpImpl`, `GenStoreImpl`) with constructor variants `Arena::new_debug` (all MoonBit), `Arena::new_release` (all C-FFI), `Arena::new_hybrid`.
 
 See `memory-management-design.md` (English) and `memory-management-design-ja.md` (Japanese) for the full design document including formal semantics, safety levels, and implementation roadmap.
 
 ## Project Structure
 
-- Root package (`/`): library code (`arena.mbt`, tests in `arena_test.mbt`)
+- Root package (`/`): library code split across files:
+  - `arena.mbt` — `Arena` struct and methods
+  - `mb_bump.mbt` — `MbBump` bump allocator
+  - `mb_gen_store.mbt` — `MbGenStore` generation storage
+  - `ref.mbt` — `Ref` generational index struct
+  - `*_test.mbt` — blackbox tests, `*_wbtest.mbt` — whitebox tests
 - `cmd/main/`: executable that imports the root package as `@lib`
 - `moon.mod.json`: module definition (`dowdiness/arena`)
-- `moon.pkg.json`: package config (per directory, lists dependencies)
+- `moon.pkg.json`: package config (imports `moonbitlang/core/int`)
 
 ## Git Hooks
 
