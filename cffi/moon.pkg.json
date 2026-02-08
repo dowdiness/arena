@@ -1,0 +1,19 @@
+{
+  "supported-targets": ["native"],
+  "import": [
+    {
+      "path": "dowdiness/arena",
+      "alias": "arena"
+    },
+    "moonbitlang/core/int"
+  ],
+  "targets": {
+    "c_bump.mbt": ["native"],
+    "c_gen.mbt": ["native"],
+    "cffi.mbt": ["native"],
+    "c_bump_test.mbt": ["native"],
+    "c_gen_test.mbt": ["native"],
+    "cffi_test.mbt": ["native"]
+  },
+  "native-stub": ["c_bump.c", "c_gen.c"]
+}

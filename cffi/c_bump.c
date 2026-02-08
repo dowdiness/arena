@@ -1,0 +1,74 @@
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+typedef struct {
+  char*    base;
+  int32_t  offset;
+  int32_t  capacity;
+} BumpArena;
+
+BumpArena* bump_create(int32_t capacity) {
+  BumpArena* a = (BumpArena*)malloc(sizeof(BumpArena));
+  if (!a) return NULL;
+  a->base = (char*)calloc(1, (size_t)capacity);
+  if (!a->base && capacity > 0) { free(a); return NULL; }
+  a->offset = 0;
+  a->capacity = capacity;
+  return a;
+}
+
+int32_t bump_is_null(BumpArena* a) {
+  return a == NULL ? 1 : 0;
+}
+
+void bump_destroy(BumpArena* a) {
+  if (a) {
+    free(a->base);
+    free(a);
+  }
+}
+
+/* Returns byte offset on success, -1 on failure */
+int32_t bump_alloc(BumpArena* a, int32_t size, int32_t align) {
+  if (size <= 0 || align <= 0) return -1;
+  int32_t remainder = a->offset % align;
+  int32_t padding = (remainder == 0) ? 0 : align - remainder;
+  if (padding > a->capacity - a->offset) return -1;
+  int32_t aligned = a->offset + padding;
+  if (size > a->capacity - aligned) return -1;
+  a->offset = aligned + size;
+  return aligned;
+}
+
+void bump_reset(BumpArena* a) {
+  a->offset = 0;
+}
+
+int32_t bump_capacity(BumpArena* a) {
+  return a->capacity;
+}
+
+int32_t bump_used(BumpArena* a) {
+  return a->offset;
+}
+
+void bump_write_i32(BumpArena* a, int32_t offset, int32_t val) {
+  memcpy(a->base + offset, &val, 4);
+}
+
+int32_t bump_read_i32(BumpArena* a, int32_t offset) {
+  int32_t val;
+  memcpy(&val, a->base + offset, 4);
+  return val;
+}
+
+void bump_write_f64(BumpArena* a, int32_t offset, double val) {
+  memcpy(a->base + offset, &val, 8);
+}
+
+double bump_read_f64(BumpArena* a, int32_t offset) {
+  double val;
+  memcpy(&val, a->base + offset, 8);
+  return val;
+}

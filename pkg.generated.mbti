@@ -6,48 +6,40 @@ package "dowdiness/arena"
 // Errors
 
 // Types and methods
-pub struct Arena {
-  bump : MbBump
-  gen_store : MbGenStore
+pub struct Arena[B, G] {
+  bump : B
+  gen_store : G
   mut generation : Int
   mut count : Int
   slot_size : Int
   max_slots : Int
 }
-pub fn Arena::alloc(Self) -> Ref?
-pub fn Arena::get_count(Self) -> Int
-pub fn Arena::get_generation(Self) -> Int
-pub fn Arena::get_max_slots(Self) -> Int
-pub fn Arena::is_valid(Self, Ref) -> Bool
-pub fn Arena::new(Int, Int) -> Self
-pub fn Arena::read_double(Self, Ref, Int) -> Double?
-pub fn Arena::read_int32(Self, Ref, Int) -> Int?
-pub fn Arena::reset(Self) -> Unit
-pub fn Arena::slot_offset(Self, Ref) -> Int?
-pub fn Arena::write_double(Self, Ref, Int, Double) -> Bool
-pub fn Arena::write_int32(Self, Ref, Int, Int) -> Bool
+pub fn[B : BumpAllocator, G : GenStore] Arena::alloc(Self[B, G]) -> Ref?
+pub fn[B, G] Arena::get_count(Self[B, G]) -> Int
+pub fn[B, G] Arena::get_generation(Self[B, G]) -> Int
+pub fn[B, G] Arena::get_max_slots(Self[B, G]) -> Int
+pub fn[B, G : GenStore] Arena::is_valid(Self[B, G], Ref) -> Bool
+pub fn Arena::new(Int, Int) -> Self[MbBump, MbGenStore]
+pub fn[B : BumpAllocator, G : GenStore] Arena::new_with(B, G, Int, Int) -> Self[B, G]
+pub fn[B : BumpAllocator, G : GenStore] Arena::read_double(Self[B, G], Ref, Int) -> Double?
+pub fn[B : BumpAllocator, G : GenStore] Arena::read_int32(Self[B, G], Ref, Int) -> Int?
+pub fn[B : BumpAllocator, G] Arena::reset(Self[B, G]) -> Unit
+pub fn[B, G : GenStore] Arena::slot_offset(Self[B, G], Ref) -> Int?
+pub fn[B : BumpAllocator, G : GenStore] Arena::write_double(Self[B, G], Ref, Int, Double) -> Bool
+pub fn[B : BumpAllocator, G : GenStore] Arena::write_int32(Self[B, G], Ref, Int, Int) -> Bool
 
 pub struct MbBump {
   data : FixedArray[Byte]
   mut offset : Int
 }
-pub fn MbBump::alloc(Self, Int, Int) -> Int?
-pub fn MbBump::capacity(Self) -> Int
 pub fn MbBump::new(Int) -> Self
-pub fn MbBump::read_double(Self, Int) -> Double?
-pub fn MbBump::read_int32(Self, Int) -> Int?
-pub fn MbBump::reset(Self) -> Unit
-pub fn MbBump::used(Self) -> Int
-pub fn MbBump::write_double(Self, Int, Double) -> Bool
-pub fn MbBump::write_int32(Self, Int, Int) -> Bool
+pub impl BumpAllocator for MbBump
 
 pub struct MbGenStore {
   data : Array[Int]
 }
-pub fn MbGenStore::get(Self, Int) -> Int
-pub fn MbGenStore::length(Self) -> Int
 pub fn MbGenStore::new(Int) -> Self
-pub fn MbGenStore::set(Self, Int, Int) -> Unit
+pub impl GenStore for MbGenStore
 
 pub struct Ref {
   index : Int
@@ -59,4 +51,20 @@ pub impl Show for Ref
 // Type aliases
 
 // Traits
+pub(open) trait BumpAllocator {
+  alloc(Self, Int, Int) -> Int?
+  reset(Self) -> Unit
+  capacity(Self) -> Int
+  used(Self) -> Int
+  write_int32(Self, Int, Int) -> Bool
+  read_int32(Self, Int) -> Int?
+  write_double(Self, Int, Double) -> Bool
+  read_double(Self, Int) -> Double?
+}
+
+pub(open) trait GenStore {
+  get(Self, Int) -> Int
+  set(Self, Int, Int) -> Unit
+  length(Self) -> Int
+}
 

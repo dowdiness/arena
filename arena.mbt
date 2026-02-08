@@ -1,7 +1,7 @@
 ///|
-pub struct Arena {
-  bump : MbBump
-  gen_store : MbGenStore
+pub struct Arena[B, G] {
+  bump : B
+  gen_store : G
   mut generation : Int
   mut count : Int
   slot_size : Int
@@ -9,7 +9,30 @@ pub struct Arena {
 }
 
 ///|
-pub fn Arena::new(slot_count : Int, slot_size : Int) -> Arena {
+pub fn[B : BumpAllocator, G : GenStore] Arena::new_with(
+  bump : B,
+  gen_store : G,
+  slot_size : Int,
+  max_slots : Int,
+) -> Arena[B, G] {
+  if bump.used() != 0 {
+    abort("Arena::new_with: bump allocator must be empty")
+  }
+  let clamped = if max_slots < 0 {
+    0
+  } else if max_slots > gen_store.length() {
+    gen_store.length()
+  } else {
+    max_slots
+  }
+  { bump, gen_store, generation: 1, count: 0, slot_size, max_slots: clamped }
+}
+
+///|
+pub fn Arena::new(
+  slot_count : Int,
+  slot_size : Int,
+) -> Arena[MbBump, MbGenStore] {
   let (capacity, max_slots) = if slot_count <= 0 || slot_size <= 0 {
     (0, 0)
   } else if slot_count > @int.max_value / slot_size {
@@ -17,18 +40,18 @@ pub fn Arena::new(slot_count : Int, slot_size : Int) -> Arena {
   } else {
     (slot_count * slot_size, slot_count)
   }
-  {
-    bump: MbBump::new(capacity),
-    gen_store: MbGenStore::new(max_slots),
-    generation: 1,
-    count: 0,
+  Arena::new_with(
+    MbBump::new(capacity),
+    MbGenStore::new(max_slots),
     slot_size,
     max_slots,
-  }
+  )
 }
 
 ///|
-pub fn Arena::alloc(self : Arena) -> Ref? {
+pub fn[B : BumpAllocator, G : GenStore] Arena::alloc(
+  self : Arena[B, G],
+) -> Ref? {
   if self.count >= self.max_slots {
     None
   } else {
@@ -45,7 +68,7 @@ pub fn Arena::alloc(self : Arena) -> Ref? {
 }
 
 ///|
-pub fn Arena::is_valid(self : Arena, aref : Ref) -> Bool {
+pub fn[B, G : GenStore] Arena::is_valid(self : Arena[B, G], aref : Ref) -> Bool {
   aref.index >= 0 &&
   aref.generation == self.generation &&
   aref.index < self.count &&
@@ -53,7 +76,10 @@ pub fn Arena::is_valid(self : Arena, aref : Ref) -> Bool {
 }
 
 ///|
-pub fn Arena::slot_offset(self : Arena, aref : Ref) -> Int? {
+pub fn[B, G : GenStore] Arena::slot_offset(
+  self : Arena[B, G],
+  aref : Ref,
+) -> Int? {
   if self.is_valid(aref) {
     Some(aref.index * self.slot_size)
   } else {
@@ -62,7 +88,7 @@ pub fn Arena::slot_offset(self : Arena, aref : Ref) -> Int? {
 }
 
 ///|
-pub fn Arena::reset(self : Arena) -> Unit {
+pub fn[B : BumpAllocator, G] Arena::reset(self : Arena[B, G]) -> Unit {
   self.bump.reset()
   guard self.generation < @int.max_value else {
     abort("Arena::reset: generation counter exhausted")
@@ -72,23 +98,23 @@ pub fn Arena::reset(self : Arena) -> Unit {
 }
 
 ///|
-pub fn Arena::get_generation(self : Arena) -> Int {
+pub fn[B, G] Arena::get_generation(self : Arena[B, G]) -> Int {
   self.generation
 }
 
 ///|
-pub fn Arena::get_count(self : Arena) -> Int {
+pub fn[B, G] Arena::get_count(self : Arena[B, G]) -> Int {
   self.count
 }
 
 ///|
-pub fn Arena::get_max_slots(self : Arena) -> Int {
+pub fn[B, G] Arena::get_max_slots(self : Arena[B, G]) -> Int {
   self.max_slots
 }
 
 ///|
-pub fn Arena::write_int32(
-  self : Arena,
+pub fn[B : BumpAllocator, G : GenStore] Arena::write_int32(
+  self : Arena[B, G],
   aref : Ref,
   field_offset : Int,
   val : Int,
@@ -103,7 +129,11 @@ pub fn Arena::write_int32(
 }
 
 ///|
-pub fn Arena::read_int32(self : Arena, aref : Ref, field_offset : Int) -> Int? {
+pub fn[B : BumpAllocator, G : GenStore] Arena::read_int32(
+  self : Arena[B, G],
+  aref : Ref,
+  field_offset : Int,
+) -> Int? {
   if field_offset < 0 || field_offset > self.slot_size - 4 {
     return None
   }
@@ -114,8 +144,8 @@ pub fn Arena::read_int32(self : Arena, aref : Ref, field_offset : Int) -> Int? {
 }
 
 ///|
-pub fn Arena::write_double(
-  self : Arena,
+pub fn[B : BumpAllocator, G : GenStore] Arena::write_double(
+  self : Arena[B, G],
   aref : Ref,
   field_offset : Int,
   val : Double,
@@ -130,8 +160,8 @@ pub fn Arena::write_double(
 }
 
 ///|
-pub fn Arena::read_double(
-  self : Arena,
+pub fn[B : BumpAllocator, G : GenStore] Arena::read_double(
+  self : Arena[B, G],
   aref : Ref,
   field_offset : Int,
 ) -> Double? {

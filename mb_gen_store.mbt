@@ -10,20 +10,16 @@ pub fn MbGenStore::new(slot_count : Int) -> MbGenStore {
 }
 
 ///|
-pub fn MbGenStore::get(self : MbGenStore, index : Int) -> Int {
+pub impl GenStore for MbGenStore with get(self, index) {
   self.data[index]
 }
 
 ///|
-pub fn MbGenStore::set(
-  self : MbGenStore,
-  index : Int,
-  generation : Int,
-) -> Unit {
+pub impl GenStore for MbGenStore with set(self, index, generation) {
   self.data[index] = generation
 }
 
 ///|
-pub fn MbGenStore::length(self : MbGenStore) -> Int {
+pub impl GenStore for MbGenStore with length(self) {
   self.data.length()
 }

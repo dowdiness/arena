@@ -11,7 +11,7 @@ pub fn MbBump::new(capacity : Int) -> MbBump {
 }
 
 ///|
-pub fn MbBump::alloc(self : MbBump, size : Int, align : Int) -> Int? {
+pub impl BumpAllocator for MbBump with alloc(self, size, align) {
   if size <= 0 || align <= 0 {
     return None
   }
@@ -32,22 +32,22 @@ pub fn MbBump::alloc(self : MbBump, size : Int, align : Int) -> Int? {
 }
 
 ///|
-pub fn MbBump::reset(self : MbBump) -> Unit {
+pub impl BumpAllocator for MbBump with reset(self) {
   self.offset = 0
 }
 
 ///|
-pub fn MbBump::capacity(self : MbBump) -> Int {
+pub impl BumpAllocator for MbBump with capacity(self) {
   self.data.length()
 }
 
 ///|
-pub fn MbBump::used(self : MbBump) -> Int {
+pub impl BumpAllocator for MbBump with used(self) {
   self.offset
 }
 
 ///|
-pub fn MbBump::write_int32(self : MbBump, offset : Int, val : Int) -> Bool {
+pub impl BumpAllocator for MbBump with write_int32(self, offset, val) {
   if offset < 0 || offset > self.data.length() - 4 {
     return false
   }
@@ -60,7 +60,7 @@ pub fn MbBump::write_int32(self : MbBump, offset : Int, val : Int) -> Bool {
 }
 
 ///|
-pub fn MbBump::read_int32(self : MbBump, offset : Int) -> Int? {
+pub impl BumpAllocator for MbBump with read_int32(self, offset) {
   if offset < 0 || offset > self.data.length() - 4 {
     return None
   }
@@ -72,7 +72,7 @@ pub fn MbBump::read_int32(self : MbBump, offset : Int) -> Int? {
 }
 
 ///|
-pub fn MbBump::write_double(self : MbBump, offset : Int, val : Double) -> Bool {
+pub impl BumpAllocator for MbBump with write_double(self, offset, val) {
   if offset < 0 || offset > self.data.length() - 8 {
     return false
   }
@@ -82,7 +82,7 @@ pub fn MbBump::write_double(self : MbBump, offset : Int, val : Double) -> Bool {
 }
 
 ///|
-pub fn MbBump::read_double(self : MbBump, offset : Int) -> Double? {
+pub impl BumpAllocator for MbBump with read_double(self, offset) {
   if offset < 0 || offset > self.data.length() - 8 {
     return None
   }

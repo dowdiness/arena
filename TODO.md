@@ -88,49 +88,37 @@ See `ROADMAP.md` for detailed design rationale and `memory-management-design.md`
 
 ## Phase 2 — Backend Abstraction & C-FFI
 
-### 2.1 Package restructuring
+Design changed from enum dispatch to generic type params with monomorphization.
+Traits stay in root package; C-FFI in `cffi/` sub-package.
 
-- [ ] Create `bump/` package with `moon.pkg.json`
-- [ ] Create `gen_store/` package with `moon.pkg.json`
-- [ ] Create `core/` package with `moon.pkg.json`
-- [ ] Move MbBump to `bump/mb_bump.mbt`
-- [ ] Move MbGenStore to `gen_store/mb_gen.mbt`
-- [ ] Move Ref and Arena to `core/`
-- [ ] Update imports and verify `moon check` passes
+### 2a Traits & Generic Arena
 
-### 2.2 Traits
+- [x] Define `BumpAllocator` trait in `bump_allocator.mbt`
+- [x] Define `GenStore` trait in `gen_store_trait.mbt`
+- [x] Implement `BumpAllocator` for `MbBump` (trait impl blocks)
+- [x] Implement `GenStore` for `MbGenStore` (trait impl blocks)
+- [x] Genericize `Arena` to `Arena[B, G]` with trait constraints
+- [x] Add `Arena::new_with[B, G]` generic constructor
+- [x] Keep `Arena::new` backward-compatible (returns `Arena[MbBump, MbGenStore]`)
+- [x] Validate `new_with` preconditions (empty bump, clamp max_slots)
+- [x] All 36 existing tests pass on wasm-gc
 
-- [ ] Define `BumpAllocator` trait in `bump/trait.mbt`
-- [ ] Implement `BumpAllocator` for `MbBump`
-- [ ] Define `GenStore` trait in `gen_store/trait.mbt`
-- [ ] Implement `GenStore` for `MbGenStore`
+### 2b C-FFI Backend (native only)
 
-### 2.3 CFFIBump
+- [x] Create `cffi/` sub-package with `moon.pkg.json` (targets conditional compilation)
+- [x] Write `cffi/c_bump.c` (C bump allocator)
+- [x] Write `cffi/c_bump.mbt` (`CFFIBump` FFI wrapper + `BumpAllocator` impl)
+- [x] Write `cffi/c_gen.c` (C generation array)
+- [x] Write `cffi/c_gen.mbt` (`CGenStore` FFI wrapper + `GenStore` impl)
+- [x] Write `cffi/cffi.mbt` (`new_arena()` convenience constructor)
+- [x] Safety: null-pointer checks on C allocation, `destroyed` flag, bounds checks before FFI
+- [x] Manual `destroy()` methods for native memory cleanup
+- [x] CFFIBump tests (14 tests mirroring MbBump suite + destroy/null safety)
+- [x] CGenStore tests (11 tests mirroring MbGenStore suite + destroy/bounds safety)
+- [x] Arena[CFFIBump, CGenStore] integration tests (10 tests)
+- [x] All 71 tests pass on native target
 
-- [ ] Write `bump/c_bump.c` (C bump allocator)
-- [ ] Write `bump/c_bump.mbt` (FFI wrapper)
-- [ ] Add finalizer for `bump_destroy`
-- [ ] Implement `BumpAllocator` for `CFFIBump`
-- [ ] Tests: same suite as MbBump
-
-### 2.4 CGenStore
-
-- [ ] Write `gen_store/c_gen.c` (C generation array)
-- [ ] Write `gen_store/c_gen.mbt` (FFI wrapper)
-- [ ] Add finalizer
-- [ ] Implement `GenStore` for `CGenStore`
-- [ ] Tests: same suite as MbGenStore
-
-### 2.5 Enum dispatch & configuration
-
-- [ ] Define `BumpImpl` enum in `core/`
-- [ ] Define `GenStoreImpl` enum in `core/`
-- [ ] Update Arena to use enum dispatch
-- [ ] Implement `Arena::new_debug` (Mb + Mb)
-- [ ] Implement `Arena::new_release` (C + C)
-- [ ] Implement `Arena::new_hybrid` (C + Mb)
-
-### 2.6 Benchmarks
+### 2.x Benchmarks
 
 - [ ] MbBump vs CFFIBump allocation throughput
 - [ ] MbGenStore vs CGenStore lookup throughput

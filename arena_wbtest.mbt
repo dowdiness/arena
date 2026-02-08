@@ -36,6 +36,31 @@ test "Arena::write_int32 rejects overflowing field_offset" {
 }
 
 ///|
+test "Arena::new_with clamps max_slots to gen_store length" {
+  // gen_store has 2 slots, but caller asks for max_slots=10
+  let arena = Arena::new_with(MbBump::new(80), MbGenStore::new(2), 8, 10)
+  inspect(arena.get_max_slots(), content="2")
+  // can allocate up to the clamped limit
+  inspect(arena.alloc() is None, content="false")
+  inspect(arena.alloc() is None, content="false")
+  inspect(arena.alloc(), content="None")
+}
+
+///|
+test "Arena::new_with clamps negative max_slots to zero" {
+  let arena = Arena::new_with(MbBump::new(32), MbGenStore::new(4), 8, -5)
+  inspect(arena.get_max_slots(), content="0")
+  inspect(arena.alloc(), content="None")
+}
+
+///|
+test "panic Arena::new_with aborts on non-empty bump allocator" {
+  let bump = MbBump::new(32)
+  bump.alloc(8, 1) |> ignore
+  Arena::new_with(bump, MbGenStore::new(4), 8, 4) |> ignore
+}
+
+///|
 test "panic Arena::reset aborts on generation overflow" {
   let arena = Arena::new(4, 8)
   arena.generation = @int.max_value

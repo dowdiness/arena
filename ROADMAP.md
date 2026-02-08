@@ -4,11 +4,16 @@ Based on the design in `memory-management-design.md` (§12).
 
 ## Current State
 
-**Phase 1 is complete.** The core arena allocator is implemented in pure MoonBit
-with 33 tests passing. The module is `dowdiness/arena` (MoonBit, Apache-2.0).
+**Phase 2 is complete.** The arena allocator now uses trait abstraction with
+generic type parameters (`Arena[B, G]`), monomorphized by MoonBit for zero
+dispatch overhead. Both pure MoonBit and C-FFI backends are implemented.
+71 tests passing on native, 36 on wasm-gc. Module: `dowdiness/arena` (Apache-2.0).
 
-Implemented: `MbBump`, `MbGenStore`, `Ref`, `Arena` with typed read/write,
-generational stale-ref detection, O(1) reset, and comprehensive input validation.
+Implemented: `BumpAllocator` trait, `GenStore` trait, `MbBump`, `MbGenStore`,
+`CFFIBump` (native), `CGenStore` (native), `Ref`, `Arena[B, G]` with typed
+read/write, generational stale-ref detection, O(1) reset, comprehensive input
+validation, and FFI safety guards (null-pointer checks, destroy-safety, bounds
+checking before FFI boundary).
 
 ---
 
@@ -167,54 +172,72 @@ arena/
     └── moon.pkg.json
 ```
 
+Note: Phase 1 file layout has been superseded by Phase 2 layout (see below).
+
 ---
 
-## Phase 2 — Backend Abstraction & C-FFI
+## Phase 2 — Backend Abstraction & C-FFI (implemented)
 
-**Goal:** Introduce trait-based abstraction and C-FFI backend. Restructure into
-sub-packages per §11.
+**Goal:** Introduce trait-based abstraction and C-FFI backend.
 
-### 2.1 Package restructuring
+**Design decision:** Uses generic type parameters with monomorphization instead of
+enum dispatch. MoonBit monomorphizes trait-constrained generics, so
+`Arena[MbBump, MbGenStore]` and `Arena[CFFIBump, CGenStore]` compile to fully
+specialized functions with zero dispatch overhead. This is superior to the
+originally planned enum dispatch approach.
 
-Split root package into:
-- `bump/` — BumpAllocator trait, MbBump, CFFIBump
-- `gen_store/` — GenStore trait, MbGenStore, CGenStore
-- `core/` — Ref, Arena, BumpImpl/GenStoreImpl enums
+### 2a — Traits & Generic Arena (implemented)
 
-### 2.2 BumpAllocator trait
+- Traits stay in root package (no sub-package restructuring needed)
+- `BumpAllocator` trait (`bump_allocator.mbt`): alloc, reset, capacity, used, write_int32, read_int32, write_double, read_double
+- `GenStore` trait (`gen_store_trait.mbt`): get, set, length
+- `MbBump` implements `BumpAllocator` via trait impl blocks
+- `MbGenStore` implements `GenStore` via trait impl blocks
+- `Arena[B, G]` generic struct with trait-constrained methods
+- `Arena::new_with[B, G]` generic constructor (validates bump is empty, clamps max_slots)
+- `Arena::new` backward-compatible convenience constructor (returns `Arena[MbBump, MbGenStore]`)
 
-Extract the common interface from MbBump into a trait (§4.2).
+### 2b — C-FFI Backend (implemented)
 
-### 2.3 GenStore trait
+Native-only `cffi/` sub-package using `targets` conditional compilation in moon.pkg.json.
 
-Extract the common interface from MbGenStore into a trait (§5.3).
+- `c_bump.c` / `c_bump.mbt` — `CFFIBump` struct with opaque `BumpPtr`, implements `BumpAllocator`
+- `c_gen.c` / `c_gen.mbt` — `CGenStore` struct with opaque `GenPtr`, implements `GenStore`
+- `cffi.mbt` — `new_arena()` convenience constructor returning `Arena[CFFIBump, CGenStore]`
+- Safety: null-pointer abort on allocation failure, `destroyed` flag prevents use-after-free/double-free, bounds-checked indices before FFI boundary
+- Manual `destroy()` methods for explicit native memory cleanup
 
-### 2.4 CFFIBump (native only)
-
-- Write `c_bump.c` with the C interface from §4.3
-- Write `CFFIBump` MoonBit wrapper with FFI extern declarations
-- Add finalizer to call `bump_destroy`
-
-### 2.5 CGenStore (native only)
-
-- Write `c_gen.c` with C int array
-- Write `CGenStore` MoonBit wrapper with FFI extern declarations
-- Add finalizer
-
-### 2.6 Enum dispatch
+### File layout (Phase 2)
 
 ```
-enum BumpImpl { Mb(MbBump) | C(CFFIBump) }
-enum GenStoreImpl { Mb(MbGenStore) | C(CGenStore) }
+arena/
+├── arena.mbt              # Arena[B, G] generic struct and methods
+├── arena_test.mbt         # Arena blackbox tests
+├── arena_wbtest.mbt       # Arena whitebox tests
+├── bump_allocator.mbt     # BumpAllocator trait
+├── gen_store_trait.mbt    # GenStore trait
+├── mb_bump.mbt            # MbBump + BumpAllocator impl
+├── mb_bump_test.mbt       # MbBump tests
+├── mb_gen_store.mbt       # MbGenStore + GenStore impl
+├── mb_gen_store_test.mbt  # MbGenStore tests
+├── ref.mbt                # Ref struct (unchanged)
+├── moon.pkg.json
+├── cffi/                  # Native-only C-FFI backend
+│   ├── c_bump.c           # C bump allocator
+│   ├── c_bump.mbt         # CFFIBump wrapper + BumpAllocator impl
+│   ├── c_bump_test.mbt    # CFFIBump tests
+│   ├── c_gen.c            # C generation array
+│   ├── c_gen.mbt          # CGenStore wrapper + GenStore impl
+│   ├── c_gen_test.mbt     # CGenStore tests
+│   ├── cffi.mbt           # new_arena() convenience constructor
+│   ├── cffi_test.mbt      # Arena[CFFIBump, CGenStore] integration tests
+│   └── moon.pkg.json      # native-only, targets conditional compilation
+└── cmd/main/
+    ├── main.mbt
+    └── moon.pkg.json
 ```
 
-### 2.7 Configuration constructors
-
-- `Arena::new_debug` — MbBump + MbGenStore
-- `Arena::new_release` — CFFIBump + CGenStore
-- `Arena::new_hybrid` — CFFIBump + MbGenStore
-
-### 2.8 Benchmarks
+### 2.x Benchmarks (not yet implemented)
 
 - MbBump vs CFFIBump allocation throughput
 - MbGenStore vs CGenStore lookup throughput
@@ -231,8 +254,8 @@ enum GenStoreImpl { Mb(MbGenStore) | C(CGenStore) }
 ```
 trait Storable {
     byte_size() -> Int
-    write_to(Self, bump: BumpImpl, offset: Int) -> Unit
-    read_from(bump: BumpImpl, offset: Int) -> Self
+    write_to[B : BumpAllocator](Self, bump: B, offset: Int) -> Unit
+    read_from[B : BumpAllocator](bump: B, offset: Int) -> Self
 }
 ```
 
@@ -311,3 +334,7 @@ Low priority. Implement as needed.
 | Typed accessor return types | Bool/Option (not Unit/bare) | Public API must not panic on bad offsets; recoverable failure via return values |
 | Alignment arithmetic | Modulo-based padding | `(offset + align - 1) / align * align` overflows for large align values |
 | TypedArena pattern | Pattern A (manual specialization) | Simple, optimizable; boilerplate acceptable for 2-3 types |
+| Phase 2 dispatch mechanism | Generic type params (not enum dispatch) | MoonBit monomorphizes generics — zero dispatch overhead, no runtime cost vs enum match |
+| Phase 2 package structure | Traits in root, C-FFI in `cffi/` sub-package | No restructuring needed; `targets` conditional compilation isolates native-only code |
+| C-FFI safety | Abort on null + destroyed flag + bounds checks | Fail fast on allocation failure; prevent use-after-free, double-free, and OOB writes before crossing FFI boundary |
+| new_with preconditions | Abort on non-empty bump, clamp max_slots | Prevents silent invariant violations (wrong slot offsets, OOB gen_store access) |
