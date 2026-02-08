@@ -26,9 +26,12 @@ arena.is_valid(ref)  // false — stale ref detected
 - **Bump allocation** backed by `FixedArray[Byte]` or C `malloc` — fast, linear allocation
 - **Generational indices** — `Ref` carries a generation tag for use-after-reset detection
 - **O(1) reset** — lazy invalidation via generation counter, no per-slot cleanup
+- **Typed arenas** — `F64Arena`, `I32Arena`, `AudioArena` with phantom-typed `TypedRef[T]` references
+- **Storable trait** — user-extensible byte-array serialization for custom types
 - **Typed read/write** — `Int32` and `Double` access with bounds checking
 - **Overflow-safe arithmetic** — all allocation and bounds checks handle integer overflow
-- **No panics on bad input** — public API returns `Option`/`Bool` instead of crashing
+- **Strict allocator contract** — typed arenas abort on post-alloc write failures (contract violation)
+- **Recoverable API failures** — stale/invalid access returns `Option`/`Bool`
 - **FFI safety** — null-pointer checks, destroy-safety flags, bounds validation before FFI boundary
 
 ## API
@@ -53,6 +56,28 @@ arena.is_valid(ref)  // false — stale ref detected
 |-------|---------|-----------------|
 | `BumpAllocator` | alloc, reset, capacity, used, write/read int32/double | `MbBump`, `CFFIBump` |
 | `GenStore` | get, set, length | `MbGenStore`, `CGenStore` |
+| `Storable` | byte_size, write_bytes, read_bytes | `Double`, `Int`, `AudioFrame` |
+
+`BumpAllocator` contract: if `alloc` succeeds, writes/reads within the allocated
+slot must succeed until `reset`. Typed arenas enforce this and abort on violation.
+
+### Typed Arenas
+
+| Type | Value type | Slot size | Key methods |
+|------|-----------|-----------|-------------|
+| `F64Arena[B, G]` | `Double` | 8 | `alloc`, `get`, `set`, `reset`, `is_valid` |
+| `I32Arena[B, G]` | `Int` | 4 | `alloc`, `get`, `set`, `reset`, `is_valid` |
+| `AudioArena[B, G]` | `AudioFrame` | 16 | `alloc`, `get`, `set`, `reset`, `is_valid` |
+
+Typed arenas return `TypedRef[T]` instead of `Ref`, preventing type confusion at compile time.
+`alloc` returns `None` only for allocation exhaustion and aborts if backend initialization
+write fails after a successful alloc (contract violation). `get`/`set` remain recoverable
+(`None`/`false`) for stale or invalid references.
+
+| Type | Fields |
+|------|--------|
+| `TypedRef[T]` | `inner : Ref` (phantom-typed) |
+| `AudioFrame` | `left : Double`, `right : Double` |
 
 ### cffi (native only)
 
@@ -68,8 +93,8 @@ arena.is_valid(ref)  // false — stale ref detected
 moon check                    # Typecheck (wasm-gc)
 moon check --target native    # Typecheck including cffi
 moon build                    # Build
-moon test                     # Run root tests (36 tests, wasm-gc)
-moon test --target native     # Run all tests including cffi (71 tests)
+moon test                     # Run root tests (71 tests, wasm-gc)
+moon test --target native     # Run all tests including cffi (119 tests)
 moon bench                    # Run MbBump benchmarks (wasm-gc)
 moon bench --target native    # Run all benchmarks including CFFIBump
 moon run cmd/main             # Run demo
@@ -103,7 +128,7 @@ See `ROADMAP.md` §2.x for full benchmark results and methodology.
 
 ## Status
 
-Phase 2 (Backend Abstraction & C-FFI) is complete. See `ROADMAP.md` for the full implementation plan including typed arenas and domain integrations.
+Phase 3 (Typed Arena) is complete. See `ROADMAP.md` for the full implementation plan including domain integrations.
 
 ## License
 

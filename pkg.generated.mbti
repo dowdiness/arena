@@ -28,6 +28,48 @@ pub fn[B, G : GenStore] Arena::slot_offset(Self[B, G], Ref) -> Int?
 pub fn[B : BumpAllocator, G : GenStore] Arena::write_double(Self[B, G], Ref, Int, Double) -> Bool
 pub fn[B : BumpAllocator, G : GenStore] Arena::write_int32(Self[B, G], Ref, Int, Int) -> Bool
 
+pub struct AudioArena[B, G] {
+  arena : Arena[B, G]
+}
+pub fn[B : BumpAllocator, G : GenStore] AudioArena::alloc(Self[B, G], AudioFrame) -> TypedRef[AudioFrame]?
+pub fn[B : BumpAllocator, G : GenStore] AudioArena::get(Self[B, G], TypedRef[AudioFrame]) -> AudioFrame?
+pub fn[B, G : GenStore] AudioArena::is_valid(Self[B, G], TypedRef[AudioFrame]) -> Bool
+pub fn AudioArena::new(Int) -> Self[MbBump, MbGenStore]
+pub fn[B : BumpAllocator, G : GenStore] AudioArena::new_with(B, G, Int) -> Self[B, G]
+pub fn[B : BumpAllocator, G] AudioArena::reset(Self[B, G]) -> Unit
+pub fn[B : BumpAllocator, G : GenStore] AudioArena::set(Self[B, G], TypedRef[AudioFrame], AudioFrame) -> Bool
+
+pub struct AudioFrame {
+  left : Double
+  right : Double
+}
+pub fn AudioFrame::new(Double, Double) -> Self
+pub impl Storable for AudioFrame
+pub impl Eq for AudioFrame
+pub impl Show for AudioFrame
+
+pub struct F64Arena[B, G] {
+  arena : Arena[B, G]
+}
+pub fn[B : BumpAllocator, G : GenStore] F64Arena::alloc(Self[B, G], Double) -> TypedRef[Double]?
+pub fn[B : BumpAllocator, G : GenStore] F64Arena::get(Self[B, G], TypedRef[Double]) -> Double?
+pub fn[B, G : GenStore] F64Arena::is_valid(Self[B, G], TypedRef[Double]) -> Bool
+pub fn F64Arena::new(Int) -> Self[MbBump, MbGenStore]
+pub fn[B : BumpAllocator, G : GenStore] F64Arena::new_with(B, G, Int) -> Self[B, G]
+pub fn[B : BumpAllocator, G] F64Arena::reset(Self[B, G]) -> Unit
+pub fn[B : BumpAllocator, G : GenStore] F64Arena::set(Self[B, G], TypedRef[Double], Double) -> Bool
+
+pub struct I32Arena[B, G] {
+  arena : Arena[B, G]
+}
+pub fn[B : BumpAllocator, G : GenStore] I32Arena::alloc(Self[B, G], Int) -> TypedRef[Int]?
+pub fn[B : BumpAllocator, G : GenStore] I32Arena::get(Self[B, G], TypedRef[Int]) -> Int?
+pub fn[B, G : GenStore] I32Arena::is_valid(Self[B, G], TypedRef[Int]) -> Bool
+pub fn I32Arena::new(Int) -> Self[MbBump, MbGenStore]
+pub fn[B : BumpAllocator, G : GenStore] I32Arena::new_with(B, G, Int) -> Self[B, G]
+pub fn[B : BumpAllocator, G] I32Arena::reset(Self[B, G]) -> Unit
+pub fn[B : BumpAllocator, G : GenStore] I32Arena::set(Self[B, G], TypedRef[Int], Int) -> Bool
+
 pub struct MbBump {
   data : FixedArray[Byte]
   mut offset : Int
@@ -48,6 +90,12 @@ pub struct Ref {
 pub impl Eq for Ref
 pub impl Show for Ref
 
+pub struct TypedRef[T] {
+  inner : Ref
+}
+pub impl[T : Eq] Eq for TypedRef[T]
+pub impl[T : Show] Show for TypedRef[T]
+
 // Type aliases
 
 // Traits
@@ -67,4 +115,12 @@ pub(open) trait GenStore {
   set(Self, Int, Int) -> Unit
   length(Self) -> Int
 }
+
+pub(open) trait Storable {
+  byte_size() -> Int
+  write_bytes(Self, FixedArray[Byte], Int) -> Unit
+  read_bytes(FixedArray[Byte], Int) -> Self
+}
+pub impl Storable for Int
+pub impl Storable for Double
 

@@ -116,7 +116,7 @@ Traits stay in root package; C-FFI in `cffi/` sub-package.
 - [x] CFFIBump tests (14 tests mirroring MbBump suite + destroy/null safety)
 - [x] CGenStore tests (11 tests mirroring MbGenStore suite + destroy/bounds safety)
 - [x] Arena[CFFIBump, CGenStore] integration tests (10 tests)
-- [x] All 71 tests pass on native target
+- [x] Phase 2 checkpoint: all 71 tests pass on native target
 
 ### 2.x Benchmarks
 
@@ -130,28 +130,34 @@ Traits stay in root package; C-FFI in `cffi/` sub-package.
 
 ### 3.1 Storable trait
 
-- [ ] Define `Storable` trait (`byte_size`, `write_to`, `read_from`)
-- [ ] Implement `Storable` for `Double`
-- [ ] Implement `Storable` for `Int`
+- [x] Define `Storable` trait (`byte_size`, `write_bytes`, `read_bytes`)
+- [x] Implement `Storable` for `Double`
+- [x] Implement `Storable` for `Int`
 
 ### 3.2 TypedRef[T]
 
-- [ ] Define `TypedRef[T]` struct wrapping `Ref`
-- [ ] Derive or implement `Eq` and `Show`
+- [x] Define `TypedRef[T]` struct wrapping `Ref` (field: `inner`)
+- [x] Derive `Eq` and `Show`
 
 ### 3.3 Manual specialization (Pattern A)
 
-- [ ] Implement `F64Arena` (alloc, get, set, reset)
-- [ ] Implement `I32Arena` (alloc, get, set, reset)
-- [ ] Define `AudioFrame` struct
-- [ ] Implement `Storable` for `AudioFrame`
-- [ ] Implement `AudioArena`
+- [x] Implement `F64Arena[B, G]` (new, new_with, alloc, get, set, reset, is_valid)
+- [x] Implement `I32Arena[B, G]` (new, new_with, alloc, get, set, reset, is_valid)
+- [x] Define `AudioFrame` struct with `AudioFrame::new` constructor
+- [x] Implement `Storable` for `AudioFrame`
+- [x] Implement `AudioArena[B, G]` (new, new_with, alloc, get, set, reset, is_valid)
 
 ### 3.4 Tests
 
-- [ ] Round-trip serialization for Double, Int, AudioFrame
-- [ ] TypedRef type safety (compile-time check)
-- [ ] Stale TypedRef detection
+- [x] Round-trip serialization for Double, Int, AudioFrame (storable_test.mbt)
+- [x] TypedRef Eq/Show (typed_ref_wbtest.mbt)
+- [x] F64Arena alloc/get/set/reset/stale-ref/capacity (f64_arena_test.mbt)
+- [x] I32Arena alloc/get/set/reset/stale-ref/capacity (i32_arena_test.mbt)
+- [x] AudioArena alloc/get/set/reset/stale-ref/capacity/left-right independence (audio_arena_test.mbt)
+- [x] CFFIBump backend tests for all three typed arenas (cffi/typed_arena_test.mbt)
+- [x] Typed alloc contract-violation panic tests (typed_arena_alloc_failure_test.mbt)
+- [x] BumpAllocator conformance tests for MbBump and CFFIBump
+- [x] All 71 tests pass on wasm-gc, 119 on native
 
 ---
 

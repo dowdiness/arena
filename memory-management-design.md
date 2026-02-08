@@ -131,6 +131,12 @@ trait BumpAllocator {
 }
 ```
 
+Contract note for implementers:
+- If `alloc` returns `Some(offset)`, writes/reads within that allocated slot
+  must succeed until `reset`.
+- Typed arenas treat post-alloc initialization write failure as a backend
+  contract violation and abort.
+
 ### §5.3 Implementation A: CFFIBump (native only, GC-free)
 
 Backed by `malloc`-allocated memory on the C side.
@@ -359,7 +365,7 @@ Optimize later if profiling shows this is a bottleneck.
 
 ```moonbit
 struct TypedRef[T] {
-  ref : Ref
+  inner : Ref
 }
 ```
 
@@ -381,12 +387,13 @@ fn[B : BumpAllocator, G : GenStore] F64Arena::alloc(
 ) -> TypedRef[Double]? {
   match self.arena.alloc() {
     None => None
-    Some(ref) => {
-      let offset = ref.index * self.arena.slot_size
-      // write value at offset (implementation depends on B)
-      Some({ ref })
+    Some(r) =>
+      if self.arena.write_double(r, 0, value) {
+        Some(TypedRef::{ inner: r })
+      } else {
+        abort("BumpAllocator contract violation")
+      }
     }
-  }
 }
 ```
 
@@ -605,7 +612,8 @@ Deliverables:
   - Storable for Double, Int
   - F64Arena[B, G], AudioFrameArena[B, G] (manual specialization)
   - TypedRef[T]
-  - Tests: type safety, round-trip serialization
+  - Strict contract enforcement in typed alloc (abort on post-alloc write failure)
+  - Tests: type safety, round-trip serialization, allocator conformance
 ```
 
 ### Phase 4 — Domain Integration

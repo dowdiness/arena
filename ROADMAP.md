@@ -4,19 +4,22 @@ Based on the design in `memory-management-design.md` (§12).
 
 ## Current State
 
-**Phase 2 is complete.** The arena allocator now uses trait abstraction with
-generic type parameters (`Arena[B, G]`), monomorphized by MoonBit for zero
-dispatch overhead. Both pure MoonBit and C-FFI backends are implemented.
-71 tests passing on native, 36 on wasm-gc. Benchmarks cover reset baselines,
-reset+refill cycles, zero dispatch overhead, and comparable throughput between backends.
-Module: `dowdiness/arena` (Apache-2.0).
+**Phase 3 is complete.** Type-safe wrappers are now implemented on top of the
+generic arena. The `Storable` trait provides byte-array serialization for
+user-defined types. `TypedRef[T]` adds phantom-typed references with zero
+runtime cost. Three manually specialized arenas (`F64Arena`, `I32Arena`,
+`AudioArena`) provide type-safe alloc/get/set using Arena's typed accessors
+directly (no byte-array intermediary). 119 tests passing on native, 71 on
+wasm-gc. Module: `dowdiness/arena` (Apache-2.0).
 
 Implemented: `BumpAllocator` trait, `GenStore` trait, `MbBump`, `MbGenStore`,
 `CFFIBump` (native), `CGenStore` (native), `Ref`, `Arena[B, G]` with typed
-read/write, generational stale-ref detection, O(1) reset, comprehensive input
-validation, FFI safety guards (null-pointer checks, destroy-safety, bounds
-checking before FFI boundary), and benchmark suite (11 benchmarks on wasm-gc,
-22 on native).
+read/write, generational stale-ref detection, O(1) reset, `Storable` trait
+(Double, Int, AudioFrame), `TypedRef[T]`, `F64Arena[B, G]`, `I32Arena[B, G]`,
+`AudioArena[B, G]`, `AudioFrame`, comprehensive input validation, FFI safety
+guards, strict typed-arena contract enforcement (abort on post-alloc write
+failure), allocator conformance tests, and benchmark suite (12 benchmarks on
+wasm-gc, 24 on native).
 
 ---
 
@@ -246,6 +249,8 @@ arena/
     └── moon.pkg.json
 ```
 
+Note: Phase 2 file layout has been superseded by Phase 3 additions (see below).
+
 ### 2.x Benchmarks (implemented)
 
 Benchmarks use MoonBit's built-in `moon bench` with `@bench.T`. Run with:
@@ -297,48 +302,105 @@ arena/
 
 ---
 
-## Phase 3 — Typed Arena
+## Phase 3 — Typed Arena (implemented)
 
 **Goal:** Type-safe serialization layer on top of Arena.
 
-### 3.1 Storable trait (§6.2)
+**Design decisions:**
+- `Storable` trait uses byte-array based serialization (`FixedArray[Byte]`) instead
+  of generic `BumpAllocator`-parameterized methods (MoonBit doesn't support generic
+  type parameters on trait methods). Storable serves as a formalization and
+  user-extensibility point.
+- Specialized arenas (`F64Arena`, `I32Arena`, `AudioArena`) bypass `Storable` and
+  use Arena's typed accessors (`write_double`, `read_double`, `write_int32`,
+  `read_int32`) directly for zero-copy performance.
+- `TypedRef[T]` uses `inner` field name (not `ref`) because `ref` is a reserved
+  keyword in MoonBit.
+
+### 3.1 Storable trait (implemented)
 
 ```
 trait Storable {
     byte_size() -> Int
-    write_to[B : BumpAllocator](Self, bump: B, offset: Int) -> Unit
-    read_from[B : BumpAllocator](bump: B, offset: Int) -> Self
+    write_bytes(Self, FixedArray[Byte], offset: Int) -> Unit
+    read_bytes(FixedArray[Byte], offset: Int) -> Self
 }
 ```
 
-### 3.2 Built-in Storable implementations
+Built-in implementations: `Double` (8 bytes, LE), `Int` (4 bytes, LE), `AudioFrame` (16 bytes).
 
-- `Double` (8 bytes)
-- `Int` (4 bytes)
+### 3.2 TypedRef[T] (implemented)
 
-### 3.3 TypedRef[T] (§6.3)
-
-Phantom-typed wrapper around Ref.
-
-### 3.4 Manual specialization (Pattern A from §6.4)
-
-- `F64Arena` — TypedArena for Double
-- `I32Arena` — TypedArena for Int
-
-### 3.5 Domain type: AudioFrame
+Phantom-typed wrapper around `Ref`. `T` is unused at runtime (phantom type) —
+zero cost. Derives `Eq` and `Show`.
 
 ```
-struct AudioFrame { left: Double, right: Double }  // 16 bytes
+struct TypedRef[T] { inner : Ref }
 ```
 
-- Storable implementation
-- `AudioArena` specialization
+### 3.3 Manual specialization — Pattern A (implemented)
 
-### 3.6 Tests
+All three arenas are generic: `F64Arena[B, G]`, `I32Arena[B, G]`, `AudioArena[B, G]`.
+Each provides:
+- `::new(slot_count)` — convenience constructor (MbBump backend)
+- `::new_with(bump, gen_store, max_slots)` — generic constructor (any backend)
+- `::alloc(self, value) -> TypedRef[T]?` — allocate and write initial value
+  (aborts on post-alloc write failure: `BumpAllocator` contract violation)
+- `::get(self, tref) -> T?` — read value (None if stale)
+- `::set(self, tref, value) -> Bool` — overwrite value (false if stale)
+- `::reset(self)` — delegates to arena.reset()
+- `::is_valid(self, tref) -> Bool` — delegates to arena.is_valid()
 
-- Type safety: TypedRef[Double] cannot be used with AudioArena
-- Round-trip serialization for all Storable types
-- Stale TypedRef detection
+| Arena | Type | Slot size | Accessors used |
+|-------|------|-----------|----------------|
+| `F64Arena` | `Double` | 8 | `write_double`/`read_double` |
+| `I32Arena` | `Int` | 4 | `write_int32`/`read_int32` |
+| `AudioArena` | `AudioFrame` | 16 | `write_double` x2 / `read_double` x2 |
+
+### 3.4 AudioFrame (implemented)
+
+```
+struct AudioFrame { left : Double, right : Double }
+```
+
+Constructor: `AudioFrame::new(left, right)`. Storable impl writes left at offset 0,
+right at offset 8.
+
+### 3.5 Tests (implemented)
+
+- Storable round-trip: Double, Int, AudioFrame (storable_test.mbt — 6 tests)
+- TypedRef Eq/Show (typed_ref_wbtest.mbt — 4 tests)
+- F64Arena: alloc, get, set, stale ref, capacity, multiple cycles (f64_arena_test.mbt — 6 tests)
+- I32Arena: same pattern (i32_arena_test.mbt — 6 tests)
+- AudioArena: same pattern + left/right independence (audio_arena_test.mbt — 7 tests)
+- Typed arena contract violation behavior (typed_arena_alloc_failure_test.mbt — 3 panic tests)
+- BumpAllocator conformance tests for MbBump (bump_allocator_conformance_test.mbt — 3 tests)
+- CFFIBump backend: F64Arena, I32Arena, AudioArena (cffi/typed_arena_test.mbt — 11 tests)
+- CFFIBump conformance tests (cffi/bump_allocator_conformance_test.mbt — 3 tests)
+
+Total: 71 tests wasm-gc, 119 tests native.
+
+### File layout (Phase 3 additions)
+
+```
+arena/
+├── storable.mbt             # Storable trait + Double/Int impls
+├── storable_test.mbt        # Storable round-trip tests
+├── typed_ref.mbt            # TypedRef[T] phantom-typed wrapper
+├── typed_ref_wbtest.mbt     # TypedRef Eq/Show whitebox tests
+├── audio_frame.mbt          # AudioFrame struct + Storable impl
+├── f64_arena.mbt            # F64Arena[B, G]
+├── f64_arena_test.mbt       # F64Arena tests
+├── i32_arena.mbt            # I32Arena[B, G]
+├── i32_arena_test.mbt       # I32Arena tests
+├── audio_arena.mbt          # AudioArena[B, G]
+├── audio_arena_test.mbt     # AudioArena tests
+├── typed_arena_alloc_failure_test.mbt  # Contract-violation panic tests
+├── bump_allocator_conformance_test.mbt # MbBump contract tests
+├── cffi/
+│   ├── typed_arena_test.mbt # Typed arena tests with CFFIBump/CGenStore
+│   └── bump_allocator_conformance_test.mbt # CFFIBump contract tests
+```
 
 ---
 
@@ -390,3 +452,8 @@ Low priority. Implement as needed.
 | Phase 2 package structure | Traits in root, C-FFI in `cffi/` sub-package | No restructuring needed; `targets` conditional compilation isolates native-only code |
 | C-FFI safety | Abort on null + destroyed flag + bounds checks | Fail fast on allocation failure; prevent use-after-free, double-free, and OOB writes before crossing FFI boundary |
 | new_with preconditions | Abort on non-empty bump, clamp max_slots | Prevents silent invariant violations (wrong slot offsets, OOB gen_store access) |
+| Typed alloc write failure | Abort (contract violation) | Successful `alloc` must guarantee writable initialized slots; avoid silent slot leaks |
+| Storable trait signature | Byte-array based (`FixedArray[Byte]`) | MoonBit doesn't support generic type params on trait methods; byte-array is the viable design |
+| Specialized arenas bypass Storable | Direct typed accessors | Zero-copy; avoids unnecessary byte-array intermediaries for built-in types |
+| TypedRef field name | `inner` (not `ref`) | `ref` is a reserved keyword in MoonBit |
+| AudioFrame slot layout | left at offset 0, right at offset 8 | Natural field order, two contiguous Doubles |

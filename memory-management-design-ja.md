@@ -99,6 +99,7 @@ BumpAllocator (trait)
 │    - alloc()は常にoffsetを前進させる（後退しない）
 │    - reset()後、used() == 0
 │    - alloc()が返すオフセットはalignの倍数
+│    - alloc()成功後、そのスロット範囲のwrite/readはresetまで成功する
 ```
 
 ### 3.3 実装A: CFFIBump (native専用)
@@ -368,6 +369,8 @@ TypedArena[T: Storable]
 │  操作:
 │    alloc(value: T) -> TypedRef[T]?
 │      スロットを確保し、valueを書き込み、型付き参照を返す。
+│      alloc成功後の初期化write失敗は
+│      BumpAllocator契約違反としてabortする。
 │
 │    get(ref: TypedRef[T]) -> T?
 │      参照が有効なら値を読み出す。staleならNone。
@@ -750,7 +753,7 @@ Phase 3: 型付きArena
 ├── Double, Int の Storable実装
 ├── AudioFrame等のドメイン型 Storable実装
 ├── TypedRef[T]（パターンAの手動特殊化）
-└── テスト: 型安全性の検証
+└── テスト: 型安全性 + アロケータ契約準拠の検証
 
 Phase 4: ドメイン統合
 ├── AudioBufferPool (DSP)
