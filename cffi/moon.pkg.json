@@ -1,11 +1,10 @@
 {
   "supported-targets": ["native"],
+  "warn-list": "-29",
   "import": [
-    {
-      "path": "dowdiness/arena",
-      "alias": "arena"
-    },
-    "moonbitlang/core/int"
+    "dowdiness/arena",
+    "moonbitlang/core/int",
+    "moonbitlang/core/bench"
   ],
   "targets": {
     "c_bump.mbt": ["native"],
@@ -13,7 +12,10 @@
     "cffi.mbt": ["native"],
     "c_bump_test.mbt": ["native"],
     "c_gen_test.mbt": ["native"],
-    "cffi_test.mbt": ["native"]
+    "cffi_test.mbt": ["native"],
+    "bench_bump_test.mbt": ["native"],
+    "bench_gen_store_test.mbt": ["native"],
+    "bench_arena_test.mbt": ["native"]
   },
   "native-stub": ["c_bump.c", "c_gen.c"]
 }

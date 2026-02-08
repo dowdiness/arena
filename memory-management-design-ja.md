@@ -733,12 +733,17 @@ Phase 1: 最小実装 (目標: 動くプロトタイプ)
 ├── Ref
 └── テスト: alloc, get, reset, stale ref検出
 
-Phase 2: C-FFIバックエンド追加
-├── c_bump.c + CFFIBump
-├── c_gen.c + CGenStore
-├── BumpImpl / GenStoreImpl enum
-├── Arena::new_debug / new_release
-└── ベンチマーク: MbBump vs CFFIBump
+Phase 2: C-FFIバックエンド追加 (実装済み)
+├── c_bump.c + CFFIBump                          ✓
+├── c_gen.c + CGenStore                           ✓
+├── Arena[B, G] ジェネリック型パラメータ方式      ✓ (enum dispatchではなくモノモーフィゼーション)
+├── Arena::new / Arena::new_with / cffi.new_arena ✓
+└── ベンチマーク: MbBump vs CFFIBump              ✓
+    結果 (native, 1000 ops/iteration):
+      Bump alloc: MbBump ~7 µs, CFFIBump ~8 µs (同等)
+      Arena allocサイクル: 両方 ~12 µs (ディスパッチオーバーヘッドなし確認)
+      reset単体 (空Arena): ~0 µs 近傍
+      reset+再確保サイクル: 100 alloc と 10000 alloc で差が出る
 
 Phase 3: 型付きArena
 ├── Storable trait

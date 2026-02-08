@@ -120,9 +120,9 @@ Traits stay in root package; C-FFI in `cffi/` sub-package.
 
 ### 2.x Benchmarks
 
-- [ ] MbBump vs CFFIBump allocation throughput
-- [ ] MbGenStore vs CGenStore lookup throughput
-- [ ] Arena alloc/reset cycle timing
+- [x] MbBump vs CFFIBump allocation throughput
+- [x] MbGenStore vs CGenStore lookup throughput
+- [x] Arena alloc/reset cycle timing
 
 ---
 

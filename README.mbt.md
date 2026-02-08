@@ -70,8 +70,36 @@ moon check --target native    # Typecheck including cffi
 moon build                    # Build
 moon test                     # Run root tests (36 tests, wasm-gc)
 moon test --target native     # Run all tests including cffi (71 tests)
+moon bench                    # Run MbBump benchmarks (wasm-gc)
+moon bench --target native    # Run all benchmarks including CFFIBump
 moon run cmd/main             # Run demo
 ```
+
+## Benchmarks
+
+Benchmarks verify the documented performance claims. Run with `moon bench --target native`.
+
+| Claim | Verified | Evidence |
+|-------|----------|----------|
+| Reset-only baseline is tiny | Yes | Empty-arena `reset` benchmark is near 0 µs |
+| Reset+refill cost scales with alloc count | Yes | 100-slot cycle is much faster than 10000-slot cycle |
+| Zero dispatch overhead | Yes | Arena alloc cycle: MbBump ~12 µs vs CFFIBump ~12 µs |
+| Fast linear allocation | Yes | 1000 bump allocs in ~7 µs (MbBump, native) |
+
+Reset methodology:
+- `reset baseline (empty arena)` benchmarks time `reset()` on an empty arena.
+- `reset+refill cycle` benchmarks time `reset(); alloc*N` to keep each iteration in a consistent non-empty-state scenario.
+- `reset-only complexity sweep (monotonic clock)` measures only `reset()` for `N=0/100/1000/10000`, with refill done outside the timed window.
+
+**Bump allocation throughput (1000 ops, native):**
+
+| Operation | MbBump | CFFIBump |
+|-----------|--------|----------|
+| alloc (8B, align=1) | ~7 µs | ~8 µs |
+| int32 read/write | ~12 µs | ~10 µs |
+| double read/write | ~15 µs | ~10 µs |
+
+See `ROADMAP.md` §2.x for full benchmark results and methodology.
 
 ## Status
 

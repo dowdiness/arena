@@ -22,6 +22,8 @@ moon fmt                      # Format code
 moon info                     # Update .mbti interface files (wasm-gc)
 moon info --target native     # Update .mbti including cffi package
 moon info && moon fmt         # Standard pre-commit workflow: update interfaces then format
+moon bench                    # Run MbBump benchmarks (wasm-gc)
+moon bench --target native    # Run all benchmarks including CFFIBump
 moon run cmd/main             # Run the main executable
 ```
 
@@ -59,15 +61,17 @@ See `memory-management-design.md` (English) and `memory-management-design-ja.md`
   - `mb_gen_store.mbt` — `MbGenStore` struct + `GenStore` impl
   - `ref.mbt` — `Ref` generational index struct
   - `*_test.mbt` — blackbox tests, `*_wbtest.mbt` — whitebox tests
+  - `bench_*_test.mbt` — benchmarks (`moon bench`)
 - `cffi/`: native-only sub-package (`dowdiness/arena/cffi`):
   - `c_bump.c` / `c_bump.mbt` — `CFFIBump` C-FFI bump allocator
   - `c_gen.c` / `c_gen.mbt` — `CGenStore` C-FFI generation storage
   - `cffi.mbt` — `new_arena()` convenience constructor
   - `*_test.mbt` — tests (mirroring root package test patterns)
+  - `bench_*_test.mbt` — CFFIBump/CGenStore benchmarks
   - `moon.pkg.json` — native-only via `targets` conditional compilation
 - `cmd/main/`: executable that imports the root package as `@lib`
 - `moon.mod.json`: module definition (`dowdiness/arena`)
-- `moon.pkg.json`: package config (imports `moonbitlang/core/int`)
+- `moon.pkg.json`: package config (imports `moonbitlang/core/int`, `moonbitlang/core/bench`)
 
 ## Git Hooks
 

@@ -579,15 +579,22 @@ Deliverables:
   - Target: all backends (wasm-gc, JS, native)
 ```
 
-### Phase 2 — C-FFI Backend
+### Phase 2 — C-FFI Backend (implemented)
 
 ```
 Deliverables:
-  - c_bump.c + CFFIBump implementing BumpAllocator
-  - c_gen.c + CGenStore implementing GenStore
-  - Arena[CFFIBump, CGenStore] works out of the box (no new Arena code!)
-  - Verify monomorphization in C output
-  - Benchmark: Arena[MbBump, MbGenStore] vs Arena[CFFIBump, CGenStore]
+  - c_bump.c + CFFIBump implementing BumpAllocator          ✓
+  - c_gen.c + CGenStore implementing GenStore                ✓
+  - Arena[CFFIBump, CGenStore] works out of the box          ✓
+  - Verify monomorphization in C output                      ✓
+  - Benchmark: Arena[MbBump, MbGenStore] vs Arena[CFFIBump, CGenStore]  ✓
+
+Benchmark results (native, 1000 ops/iteration):
+  - Bump alloc: MbBump ~7 µs, CFFIBump ~8 µs (comparable)
+  - Arena alloc cycle: both ~12 µs (zero dispatch overhead confirmed)
+  - Reset-only baseline (empty arena): near 0 µs
+  - Reset+refill cycle scales with alloc count (100 vs 10000 allocs)
+  - CFFIBump typed read/write ~10 µs vs MbBump ~12-15 µs (C memcpy faster)
 ```
 
 ### Phase 3 — Typed Arena
