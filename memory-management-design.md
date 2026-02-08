@@ -1,7 +1,11 @@
-# MoonBit Memory Management Library — Design Document
+# MoonBit Memory Management Library — Design Document (v2)
 
 > Target audience: Claude Code and human developers.
 > Each section is self-contained. Cross-references use `§N` notation.
+>
+> **v2 changes:** Confirmed via C backend output that MoonBit uses
+> monomorphization for trait-constrained generics. Enum dispatch design
+> removed. Arena now uses generic type parameters `Arena[B, G]`.
 
 ---
 
@@ -29,10 +33,37 @@ codebase under normal GC.
 2. **Separation of concerns** — Physical memory (C) vs. logical lifetime (MoonBit).
 3. **Backend-switchable** — Pure MoonBit (all backends) or C-FFI (native only).
 4. **Domain-agnostic core** — DSP, parser, CRDT, and incr all build on the same primitives.
+5. **Zero-cost abstraction** — MoonBit monomorphizes generic functions; no vtable or enum match overhead.
 
 ---
 
-## §3 Architecture Overview
+## §3 Key Language Facts (Confirmed)
+
+These were verified by inspecting actual C backend output from `moon build --target native`:
+
+```
+FACT 1: MoonBit monomorphizes trait-constrained generic functions.
+        fn[T : Greet] say_hello(animal : T) generates separate
+        say_hello$0 (Dog) and say_hello$1 (Cat) C functions.
+        No vtable. No function pointers. Pure static dispatch.
+
+FACT 2: struct Arena[B] (unconstrained type parameter) parses and works.
+
+FACT 3: struct Arena[B, G] (multiple type parameters) works.
+
+FACT 4: Trait constraints go on METHOD definitions, not struct definitions.
+        fn[B : BumpAllocator] Arena::alloc(self : Arena[B]) -> Ref?
+
+FACT 5: struct Arena[B : Trait] (constraint on struct) does NOT parse.
+
+CONSEQUENCE: Arena[B, G] with constraints on methods gives us
+             monomorphized, zero-cost backend switching with no
+             enum dispatch and no vtable overhead.
+```
+
+---
+
+## §4 Architecture Overview
 
 ```
 ╔═══════════════════════════════════════════════════════════════╗
@@ -40,10 +71,10 @@ codebase under normal GC.
 ║  AudioBufferPool   ASTArena   CRDTOpPool   MemoTable          ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║                     Layer 3 — Typed Arena                     ║
-║  TypedArena[T]     TypedRef[T]     Storable (trait)           ║
+║  TypedArena[B,G,T]   TypedRef[T]     Storable (trait)         ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║                     Layer 2 — Generic Arena                   ║
-║  Arena             Ref             GenStore (trait)            ║
+║  Arena[B,G]        Ref              GenStore (trait)           ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║                     Layer 1 — Physical Memory                 ║
 ║  BumpAllocator (trait)                                        ║
@@ -55,11 +86,14 @@ codebase under normal GC.
 Data flows downward: Domain → L3 → L2 → L1.
 Safety checks flow upward: L1 (bounds) → L2 (generation) → L3 (type).
 
+**At compile time**, `Arena[MbBump, MbGenStore]` and `Arena[CFFIBump, CGenStore]`
+generate completely separate, specialized C functions. Zero runtime dispatch cost.
+
 ---
 
-## §4 Layer 1 — Physical Memory
+## §5 Layer 1 — Physical Memory
 
-### §4.1 Semantics
+### §5.1 Semantics
 
 Layer 1 manages a contiguous byte buffer via bump-pointer allocation.
 It has no concept of types or slots. It only knows bytes and offsets.
@@ -77,27 +111,27 @@ Created ──alloc()──▶ Allocated ──alloc()──▶ ... ──▶ Fu
 - After `reset()`, all previously returned offsets are logically invalid,
   but Layer 1 does **not** detect invalid access. That is Layer 2's job.
 
-### §4.2 Trait: BumpAllocator
+### §5.2 Trait: BumpAllocator
 
-```
+```moonbit
 trait BumpAllocator {
-    alloc(Self, size: Int, align: Int) -> Int?
-    //  Returns byte offset on success, None on capacity exhaustion.
-    //  Postcondition: returned offset is a multiple of `align`.
+  alloc(Self, size : Int, align : Int) -> Int?
+  // Returns byte offset on success, None on capacity exhaustion.
+  // Postcondition: returned offset is a multiple of `align`.
 
-    reset(Self) -> Unit
-    //  Resets offset to 0. O(1).
-    //  Postcondition: used() == 0.
+  reset(Self) -> Unit
+  // Resets offset to 0. O(1).
+  // Postcondition: used() == 0.
 
-    capacity(Self) -> Int
-    //  Total capacity in bytes. Constant after creation.
+  capacity(Self) -> Int
+  // Total capacity in bytes. Constant after creation.
 
-    used(Self) -> Int
-    //  Bytes allocated since last reset.
+  used(Self) -> Int
+  // Bytes allocated since last reset.
 }
 ```
 
-### §4.3 Implementation A: CFFIBump (native only, GC-free)
+### §5.3 Implementation A: CFFIBump (native only, GC-free)
 
 Backed by `malloc`-allocated memory on the C side.
 MoonBit holds an opaque pointer; a finalizer calls `free` on GC collection.
@@ -112,24 +146,23 @@ size_t     bump_alloc(BumpArena* a, size_t size, size_t align);
 void       bump_reset(BumpArena* a);
 void       bump_destroy(BumpArena* a);
 
-// Typed read/write helpers (avoid per-byte FFI calls)
-void   bump_write_f64(BumpArena* a, size_t offset, double val);
-double bump_read_f64(BumpArena* a, size_t offset);
-void   bump_write_i32(BumpArena* a, size_t offset, int32_t val);
+void    bump_write_f64(BumpArena* a, size_t offset, double val);
+double  bump_read_f64(BumpArena* a, size_t offset);
+void    bump_write_i32(BumpArena* a, size_t offset, int32_t val);
 int32_t bump_read_i32(BumpArena* a, size_t offset);
-void   bump_memcpy(BumpArena* a, size_t dst, size_t src, size_t len);
+void    bump_memcpy(BumpArena* a, size_t dst, size_t src, size_t len);
 ```
 
 **When to use:** DSP hot paths, any code path where GC pauses are unacceptable.
 
-### §4.4 Implementation B: MbBump (all backends)
+### §5.4 Implementation B: MbBump (all backends)
 
 Backed by `FixedArray[Byte]` managed by MoonBit's GC.
 
-```
+```moonbit
 struct MbBump {
-    data : FixedArray[Byte]
-    mut offset : Int
+  data : FixedArray[Byte]
+  mut offset : Int
 }
 ```
 
@@ -138,19 +171,19 @@ tolerable (CRDT batch processing, non-real-time parsing).
 
 ---
 
-## §5 Layer 2 — Generic Arena
+## §6 Layer 2 — Generic Arena
 
-### §5.1 Semantics
+### §6.1 Semantics
 
 Layer 2 introduces **slots** (fixed-size regions within the bump buffer) and
 **generational indices** that detect use-after-reset at runtime.
 
-### §5.2 Type: Ref
+### §6.2 Type: Ref
 
-```
+```moonbit
 struct Ref {
-    index      : Int   // Slot number (0-based)
-    generation : Int   // Arena generation at allocation time
+  index      : Int   // Slot number (0-based)
+  generation : Int   // Arena generation at allocation time
 }
 ```
 
@@ -168,16 +201,15 @@ valid(ref, arena) ⟺
 - After `arena.reset()`, `valid(ref, arena)` is false for ALL existing Refs.
 - Two Refs are equal iff they point to the same slot in the same generation.
 
-### §5.3 Trait: GenStore
+### §6.3 Trait: GenStore
 
 Stores per-slot generation numbers. Abstracted to allow MoonBit/C switching.
 
-```
+```moonbit
 trait GenStore {
-    get(Self, index: Int) -> Int
-    set(Self, index: Int, generation: Int) -> Unit
-    length(Self) -> Int
-    invalidate_all(Self, new_generation: Int) -> Unit
+  get(Self, index : Int) -> Int
+  set(Self, index : Int, generation : Int) -> Unit
+  length(Self) -> Int
 }
 ```
 
@@ -188,227 +220,178 @@ trait GenStore {
 | `MbGenStore` | `Array[Int]` | Yes (GC-managed) | All backends |
 | `CGenStore` | C `int*` array | No | Native only |
 
-### §5.4 Type: Arena
+### §6.4 Type: Arena[B, G]
 
-```
-struct Arena {
-    bump       : BumpImpl        // Physical memory (enum, see §7)
-    gen_store  : GenStoreImpl    // Generation storage (enum, see §7)
-    mut generation : Int         // Current arena-wide generation
-    mut count  : Int             // Number of allocated slots
-    slot_size  : Int             // Bytes per slot (fixed at creation)
-    max_slots  : Int             // capacity / slot_size
+```moonbit
+struct Arena[B, G] {
+  bump       : B
+  gen_store  : G
+  mut generation : Int
+  mut count  : Int
+  slot_size  : Int
+  max_slots  : Int
 }
 ```
 
-**Operations:**
+**Operations (constraints on methods, not struct):**
 
-```
-fn Arena::alloc(self) -> Ref?
-    // Allocates one slot.
-    // Returns None if count == max_slots.
-    // Postcondition: valid(returned_ref, self) == true.
-
-fn Arena::is_valid(self, ref: Ref) -> Bool
-    // Checks the validity predicate (§5.2).
-
-fn Arena::slot_offset(self, ref: Ref) -> Int?
-    // Returns the byte offset for ref's slot, or None if stale.
-    // offset = ref.index * self.slot_size
-
-fn Arena::reset(self) -> Unit
-    // Resets bump allocator, increments generation, sets count to 0.
-    // Postcondition: for all previously returned Refs r, valid(r, self) == false.
-```
-
-### §5.5 Lazy Invalidation on Reset
-
-A naive `reset()` writes -1 to every slot in `gen_store` — O(n).
-With lazy invalidation, `reset()` is O(1):
-
-```
-fn reset(self) {
-    self.bump.reset()
-    self.generation += 1   // This alone logically invalidates all Refs.
-    self.count = 0
-    // gen_store is NOT touched.
+```moonbit
+fn[B : BumpAllocator, G : GenStore] Arena::alloc(self : Arena[B, G]) -> Ref? {
+  if self.count >= self.max_slots {
+    return None
+  }
+  let size = self.slot_size
+  let align = 8
+  match self.bump.alloc(size, align) {
+    None => None
+    Some(offset) => {
+      let index = self.count
+      self.gen_store.set(index, self.generation)
+      self.count += 1
+      Some({ index, generation: self.generation })
+    }
+  }
 }
 
-fn alloc(self) -> Ref? {
-    // Only writes the current generation to the NEW slot.
-    self.gen_store.set(self.count, self.generation)
-    ...
+fn[B : BumpAllocator, G : GenStore] Arena::is_valid(
+  self : Arena[B, G], ref : Ref
+) -> Bool {
+  ref.generation == self.generation
+  && ref.index < self.count
+  && self.gen_store.get(ref.index) == ref.generation
 }
 
-fn is_valid(self, ref) -> Bool {
-    // Old gen_store entries are stale because ref.generation
-    // won't match self.generation.
-    ref.generation == self.generation
-    && ref.index < self.count
-    && self.gen_store.get(ref.index) == ref.generation
+fn[B : BumpAllocator, G : GenStore] Arena::slot_offset(
+  self : Arena[B, G], ref : Ref
+) -> Int? {
+  if self.is_valid(ref) {
+    Some(ref.index * self.slot_size)
+  } else {
+    None
+  }
+}
+
+fn[B : BumpAllocator, G : GenStore] Arena::reset(self : Arena[B, G]) -> Unit {
+  self.bump.reset()
+  self.generation += 1
+  self.count = 0
+  // gen_store is NOT cleared — lazy invalidation.
+  // Old entries are stale because ref.generation != self.generation.
 }
 ```
 
-This makes `reset()` O(1) — critical for DSP block boundaries called ~172 times/sec.
+### §6.5 Lazy Invalidation on Reset
 
-### §5.6 Generation Overflow
+```
+reset() is O(1):
+  - bump.reset()         // reset offset to 0
+  - generation += 1      // logically invalidates all existing Refs
+  - count = 0            // reset slot counter
 
-At 172 resets/sec (44100 Hz / 256 frames), `Int` (2^31) overflows after ~395 years.
-Not a practical concern. Defensive option: clear gen_store on overflow.
+alloc() only writes the current generation to the NEW slot.
+is_valid() rejects old refs because ref.generation != self.generation.
+
+No need to clear gen_store on reset — critical for DSP block boundaries.
+```
+
+### §6.6 Monomorphization in Action
+
+When user code instantiates the two configurations:
+
+```moonbit
+let debug_arena : Arena[MbBump, MbGenStore] = ...
+let release_arena : Arena[CFFIBump, CGenStore] = ...
+```
+
+The compiler generates (in the C output):
+
+```c
+// Fully specialized — no indirection, no match, no vtable
+Ref* Arena_MbBump_MbGenStore_alloc(Arena_MbBump_MbGenStore* self) { ... }
+Ref* Arena_CFFIBump_CGenStore_alloc(Arena_CFFIBump_CGenStore* self) { ... }
+```
+
+Each call to `self.bump.alloc(...)` is inlined as a direct call to the
+concrete implementation. The C compiler can then further inline and optimize.
 
 ---
 
-## §6 Layer 3 — Typed Arena
+## §7 Layer 3 — Typed Arena
 
-### §6.1 Semantics
+### §7.1 Trait: Storable
 
-Layer 3 attaches type information to Layer 2 slots, providing type-safe
-serialization/deserialization of domain values to/from raw bytes.
-
-### §6.2 Trait: Storable
-
-```
+```moonbit
 trait Storable {
-    byte_size() -> Int
-    //  Fixed size in bytes. Same for all instances of a given type.
+  byte_size() -> Int
+  // Fixed size in bytes. Same for all instances of a given type.
 
-    write_to(Self, bump: BumpImpl, offset: Int) -> Unit
-    //  Serialize self into bump buffer at the given offset.
+  write_to(Self, bump : BumpImpl, offset : Int) -> Unit
+  // Serialize self into bump buffer at the given offset.
 
-    read_from(bump: BumpImpl, offset: Int) -> Self
-    //  Deserialize a value from bump buffer at the given offset.
+  read_from(bump : BumpImpl, offset : Int) -> Self
+  // Deserialize a value from bump buffer at the given offset.
 }
 ```
 
-**Built-in implementations:**
+**Note on Storable's bump parameter:** Since `write_to` and `read_from` need
+to work with the bump allocator, they take the concrete bump type. This means
+Storable implementations are tied to a specific BumpAllocator implementation.
 
-| Type | byte_size | Read/Write via |
-|------|-----------|---------------|
-| `Double` | 8 | `bump_write_f64` / `bump_read_f64` |
-| `Int` | 4 | `bump_write_i32` / `bump_read_i32` |
-| `AudioFrame { left: Double, right: Double }` | 16 | Two f64 writes |
+Alternative: make Storable itself generic:
 
-**Constraint:** Only fixed-size types can implement `Storable` directly.
-Variable-length data (strings, arrays) is stored as an offset+length pair
-pointing elsewhere in the arena. See §8.2 (ASTArena) for the pattern.
+```moonbit
+// Option A: Storable is bump-agnostic (uses abstract read/write helpers)
+trait Storable {
+  byte_size() -> Int
+  write_bytes(Self, FixedArray[Byte], offset : Int) -> Unit
+  read_bytes(FixedArray[Byte], offset : Int) -> Self
+}
 
-### §6.3 Type: TypedRef[T]
-
+// Option B: Storable is generic over bump type
+// (may hit MoonBit trait limitations)
 ```
+
+**Recommendation:** Start with Option A (byte-array based). For CFFIBump,
+provide a helper that copies between C memory and a temporary FixedArray[Byte].
+Optimize later if profiling shows this is a bottleneck.
+
+### §7.2 Type: TypedRef[T]
+
+```moonbit
 struct TypedRef[T] {
-    ref : Ref
+  ref : Ref
 }
 ```
 
 Phantom type parameter `T` prevents mixing references across arenas of
-different types at compile time. Zero runtime cost — it is just a `Ref`.
+different element types at compile time. Zero runtime cost — it is just a `Ref`.
 
-### §6.4 TypedArena[T] and MoonBit's Trait Limitation
+### §7.3 TypedArena[B, G, T] — Pattern A (Manual Specialization)
 
-MoonBit does not support bounded type parameters on structs
-(i.e., `struct TypedArena[T : Storable]` may not work). Three workarounds:
+Since MoonBit's trait limitations may prevent fully generic TypedArena,
+use manual specialization per domain type:
 
-**Pattern A — Manual specialization (recommended to start):**
+```moonbit
+struct F64Arena[B, G] {
+  arena : Arena[B, G]
+}
 
-```
-struct F64Arena     { arena : Arena }
-struct AudioArena   { arena : Arena }
-
-fn F64Arena::alloc(self, val: Double) -> TypedRef[Double]? { ... }
-fn AudioArena::alloc(self, val: AudioFrame) -> TypedRef[AudioFrame]? { ... }
-```
-
-Pros: Simple, optimizable. Cons: Boilerplate per type.
-
-**Pattern B — Closure-based erasure:**
-
-```
-struct TypedArena {
-    arena    : Arena
-    write_fn : (BumpImpl, Int, ???) -> Unit   // type-erased
-    read_fn  : (BumpImpl, Int) -> ???
+fn[B : BumpAllocator, G : GenStore] F64Arena::alloc(
+  self : F64Arena[B, G], value : Double
+) -> TypedRef[Double]? {
+  match self.arena.alloc() {
+    None => None
+    Some(ref) => {
+      let offset = ref.index * self.arena.slot_size
+      // write value at offset (implementation depends on B)
+      Some({ ref })
+    }
+  }
 }
 ```
 
-Pros: Single type. Cons: Loses type safety, closure overhead.
-
-**Pattern C — Code generation (future):**
-
-Auto-generate Pattern A via build script or macro once patterns stabilize.
-
-**Recommendation:** Start with Pattern A for 2–3 domain types. Extract the
-common pattern later.
-
----
-
-## §7 Backend Switching
-
-### §7.1 Enum Dispatch
-
-```
-enum BumpImpl {
-    Mb(MbBump)
-    C(CFFIBump)
-}
-
-enum GenStoreImpl {
-    Mb(MbGenStore)
-    C(CGenStore)
-}
-```
-
-Arena uses these enums internally. All operations dispatch via `match`.
-
-### §7.2 Configuration Constructors
-
-```
-fn Arena::new_debug(slot_count: Int, slot_size: Int) -> Arena
-    // Uses MbBump + MbGenStore. Works on all backends.
-
-fn Arena::new_release(slot_count: Int, slot_size: Int) -> Arena
-    // Uses CFFIBump + CGenStore. Native only, GC-free.
-
-fn Arena::new_hybrid(slot_count: Int, slot_size: Int) -> Arena
-    // Uses CFFIBump + MbGenStore. GC-free memory, MoonBit-side checks.
-```
-
-### §7.3 Cost Analysis of Enum Dispatch
-
-```
-match branch:          ~1 ns  (branch-predicted)
-C-FFI call overhead:   ~5-20 ns  (indirect function pointer)
-bump_alloc itself:     ~2-5 ns  (pointer arithmetic)
-f64 read/write:        ~1 ns
-
-Conclusion: enum match cost is negligible compared to FFI overhead.
-The real optimization target is reducing the NUMBER of FFI calls,
-not eliminating match branches.
-```
-
-**Optimization pattern for DSP:**
-
-```
-// BAD: FFI call per sample
-for frame in 0..<256 {
-    arena.get_sample(ref, frame)  // FFI + match + bounds check each time
-}
-
-// GOOD: validate once, delegate loop to C
-let offset = arena.slot_offset(ref).unwrap()
-c_process_block(arena.bump_ptr(), offset, 256)  // single FFI call
-```
-
-### §7.4 Alternative: Package-Level Switching
-
-Instead of enum dispatch, provide two packages with identical signatures:
-
-```
-arena_debug/    → uses MbBump + MbGenStore
-arena_release/  → uses CFFIBump + CGenStore
-```
-
-Consumer code switches by changing the import. Zero runtime dispatch cost.
-Trade-off: cannot mix backends within the same compilation unit.
+**Recommendation:** Start with 2-3 manual specializations (Double, AudioFrame,
+ASTNode). Extract common patterns for code generation later.
 
 ---
 
@@ -416,14 +399,11 @@ Trade-off: cannot mix backends within the same compilation unit.
 
 ### §8.1 DSP: AudioBufferPool
 
-**Purpose:** Allocate and reuse audio buffers within a single audio callback
-without any GC involvement.
-
-```
-struct AudioBufferPool {
-    arena             : Arena   // slot_size = frames_per_buffer * channels * 8
-    frames_per_buffer : Int
-    channels          : Int
+```moonbit
+struct AudioBufferPool[B, G] {
+  arena             : Arena[B, G]
+  frames_per_buffer : Int
+  channels          : Int
 }
 ```
 
@@ -432,113 +412,70 @@ struct AudioBufferPool {
 ```
 1. arena.reset()                         // O(1), invalidates all prior Refs
 2. let temp = arena.alloc()              // O(1), bump pointer advance
-3. DSP processing via C-side read/write  // zero GC, zero alloc
+3. DSP processing via direct read/write  // zero GC, zero alloc
 4. Callback returns                      // nothing to free
 ```
 
-**Invariant:** Refs must NOT survive across callbacks.
-`reset()` at the start of each callback enforces this — any stale Ref
-from the previous callback will fail `is_valid()`.
+**Concrete instantiation:**
 
-**Persistent buffers** (delay lines, reverb tails): Use a separate Arena
-that is NOT reset per callback, or use normal MoonBit arrays under GC.
+```moonbit
+// Real-time audio — native only, GC-free
+let pool : AudioBufferPool[CFFIBump, CGenStore] = ...
+
+// Offline rendering — all backends
+let pool : AudioBufferPool[MbBump, MbGenStore] = ...
+```
+
+Both compile to fully specialized code with zero dispatch overhead.
 
 ### §8.2 Parser: ASTArena
 
-**Purpose:** Mass-allocate AST nodes during a parse phase, then bulk-release.
-
-```
-struct ASTArena {
-    node_arena   : Arena   // Fixed-size AST node records
-    string_arena : Arena   // Variable-length identifier/literal strings
+```moonbit
+struct ASTArena[B, G] {
+  node_arena   : Arena[B, G]
+  string_arena : Arena[B, G]
 }
 ```
 
-**AST node representation in the arena:**
+**AST node representation:**
 
 ```
-// Example: BinaryExpr stored as a fixed-size record
-//   op    : Int  (4 bytes) — enum tag for +, -, *, /
-//   left  : Ref  (8 bytes) — index + generation
-//   right : Ref  (8 bytes)
-//   Total: 20 bytes per slot (padded to 24 for alignment)
-```
+BinaryExpr = { op: Int(4B), left: Ref(8B), right: Ref(8B) } = 20B → 24B aligned
 
-**Variable-length data (strings):**
-
-```
-// Strings are written directly into string_arena.
-// AST nodes hold a StringRef:
-struct StringRef {
-    offset : Int   // byte offset within string_arena
-    length : Int   // byte length
-}
-// StringRef is 8 bytes — fits inside a fixed-size node slot.
+Strings: written directly into string_arena as bytes.
+AST nodes hold StringRef = { offset: Int, length: Int } = 8B.
 ```
 
 **Phase lifecycle:**
 
-```
-fn parse(source: String) -> PersistentAST {
-    let nodes = Arena::new(...)
-    let strings = Arena::new(...)
-    let root = parse_expr(source, nodes, strings)
-    let result = convert_to_gc_managed(root, nodes, strings)
-    nodes.reset()
-    strings.reset()
-    result
+```moonbit
+fn parse[B : BumpAllocator, G : GenStore](
+  source : String, nodes : Arena[B, G], strings : Arena[B, G]
+) -> PersistentAST {
+  // ... parse into arenas ...
+  let result = convert_to_gc_managed(root, nodes, strings)
+  nodes.reset()
+  strings.reset()
+  result
 }
 ```
-
-**Integration with incr library:**
-When incr Memo nodes hold Refs into ASTArena, `Arena.reset()` must be
-synchronized with Memo invalidation. Approach: tie `incr.generation` to
-`Arena.generation` so that a Memo is automatically stale when its Arena resets.
 
 ### §8.3 CRDT: CRDTOpPool
 
-**Purpose:** Efficiently batch-process remote CRDT operations.
-
-```
-struct CRDTOpPool {
-    op_arena : Arena   // Temporary storage for operation batch
+```moonbit
+struct CRDTOpPool[B, G] {
+  op_arena : Arena[B, G]
 }
 ```
 
-**Pattern:**
-
-```
-1. Receive batch of remote operations
-2. Deserialize into op_arena
-3. Apply to FugueTree (which lives under normal GC)
-4. op_arena.reset()
-```
-
-The FugueTree itself remains GC-managed. Only the transient operation data
-uses the arena. `MbBump` (all-backend) is likely sufficient here since
-CRDT batch processing is not real-time-constrained.
+Likely sufficient with `Arena[MbBump, MbGenStore]` (all-backend, not
+real-time-constrained).
 
 ### §8.4 incr: MemoTable
 
-**Purpose:** Generation-based cache management for incremental computation.
-
-The MemoTable does not necessarily need a physical Arena. It borrows only the
-**generational index concept**:
-
-```
-struct MemoEntry[T] {
-    value      : T
-    generation : Int
-}
-
-fn is_fresh(entry: MemoEntry[T], current_gen: Int) -> Bool {
-    entry.generation == current_gen
-}
-```
-
-If memo computation results contain large temporary data structures, those
-temporaries CAN be placed in an Arena for O(1) bulk release on generation
-transition. But the MemoTable's own metadata (HashMap) stays under GC.
+Borrows only the generational index concept. No physical Arena needed.
+If memo results contain large temporaries, those can optionally go into
+an Arena for O(1) bulk release on generation transition.
 
 ---
 
@@ -564,37 +501,33 @@ Level 0 — Unsafe (no checks)
 - Profile. Identify hot paths.
 - Downgrade ONLY those hot paths to Level 0 with explicit `_unchecked` suffix.
 
-```
-fn Arena::get_checked(self, ref: Ref) -> Bytes?     // Level 2
-fn Arena::get_unchecked(self, ref: Ref) -> Bytes     // Level 0
+```moonbit
+fn[B : BumpAllocator, G : GenStore] Arena::get_checked(
+  self : Arena[B, G], ref : Ref
+) -> Bytes?
+
+fn[B : BumpAllocator, G : GenStore] Arena::get_unchecked(
+  self : Arena[B, G], ref : Ref
+) -> Bytes
 ```
 
 ---
 
 ## §10 GrowableArena (Extension)
 
-For parsers where input size is unknown, a single fixed-size Arena may not
-suffice. GrowableArena chains multiple Arena chunks.
-
-```
-struct GrowableArena {
-    chunks      : Array[Arena]
-    mut current : Int
+```moonbit
+struct GrowableArena[B, G] {
+  chunks      : Array[Arena[B, G]]
+  mut current : Int
 }
 
 struct GrowableRef {
-    chunk_index : Int
-    ref         : Ref
+  chunk_index : Int
+  ref         : Ref
 }
 ```
 
-**Behavior:**
-- `alloc()`: Try current chunk. If full, create a new chunk and append.
-- `reset()`: Reset all chunks, set current to 0.
-- Access requires one extra indirection (chunk lookup).
-
-**Priority:** Low. Start with fixed Arena. Add GrowableArena when needed.
-DSP never needs it (buffer sizes are known). Parser and CRDT may need it.
+**Priority:** Low. Start with fixed Arena. DSP never needs it.
 
 ---
 
@@ -604,30 +537,29 @@ DSP never needs it (buffer sizes are known). Parser and CRDT may need it.
 arena/
 ├── core/
 │   ├── ref.mbt              # Ref, TypedRef types
-│   ├── arena.mbt            # Arena struct and core logic
-│   └── storable.mbt         # Storable trait definition
+│   ├── arena.mbt            # Arena[B, G] struct and methods
+│   └── storable.mbt         # Storable trait
 │
 ├── bump/
 │   ├── trait.mbt            # BumpAllocator trait
-│   ├── mb_bump.mbt          # MbBump implementation
-│   ├── c_bump.mbt           # CFFIBump MoonBit wrapper
+│   ├── mb_bump.mbt          # MbBump (FixedArray[Byte], all backends)
+│   ├── c_bump.mbt           # CFFIBump (C-FFI wrapper, native only)
 │   └── c_bump.c             # C bump allocator implementation
 │
 ├── gen_store/
 │   ├── trait.mbt            # GenStore trait
-│   ├── mb_gen.mbt           # MbGenStore implementation
-│   ├── c_gen.mbt            # CGenStore MoonBit wrapper
+│   ├── mb_gen.mbt           # MbGenStore (Array[Int], all backends)
+│   ├── c_gen.mbt            # CGenStore (C-FFI wrapper, native only)
 │   └── c_gen.c              # C generation array implementation
 │
-├── config/
-│   ├── debug.mbt            # Arena::new_debug  (Mb + Mb)
-│   └── release.mbt          # Arena::new_release (C + C)
-│
 └── domain/
-    ├── audio_buffer.mbt     # AudioBufferPool
-    ├── ast_arena.mbt        # ASTArena
+    ├── audio_buffer.mbt     # AudioBufferPool[B, G]
+    ├── ast_arena.mbt        # ASTArena[B, G]
     └── ...
 ```
+
+**Note:** No `config/` directory needed. Backend selection is purely a matter
+of which type parameters the user provides at instantiation time.
 
 ---
 
@@ -635,64 +567,57 @@ arena/
 
 ### Phase 1 — Minimal Viable Arena
 
-Scope: MbBump + MbGenStore + Arena + Ref. All backends.
-
 ```
 Deliverables:
-  - MbBump with alloc/reset/capacity/used
-  - MbGenStore with get/set/length/invalidate_all
-  - Arena with alloc/is_valid/slot_offset/reset
+  - BumpAllocator trait
+  - MbBump implementing BumpAllocator
+  - GenStore trait
+  - MbGenStore implementing GenStore
+  - Arena[B, G] with alloc/is_valid/slot_offset/reset
   - Ref struct
-  - Tests: alloc, get, reset, stale ref detection, capacity exhaustion
+  - Tests: alloc, is_valid, reset, stale ref detection, capacity exhaustion
+  - Target: all backends (wasm-gc, JS, native)
 ```
 
 ### Phase 2 — C-FFI Backend
 
-Scope: CFFIBump + CGenStore + BumpImpl/GenStoreImpl enums. Native only.
-
 ```
 Deliverables:
-  - c_bump.c and CFFIBump wrapper with finalizer
-  - c_gen.c and CGenStore wrapper with finalizer
-  - Enum dispatch (BumpImpl, GenStoreImpl)
-  - Arena::new_debug / new_release / new_hybrid
-  - Benchmark: MbBump vs CFFIBump allocation throughput
-  - Benchmark: MbGenStore vs CGenStore lookup throughput
+  - c_bump.c + CFFIBump implementing BumpAllocator
+  - c_gen.c + CGenStore implementing GenStore
+  - Arena[CFFIBump, CGenStore] works out of the box (no new Arena code!)
+  - Verify monomorphization in C output
+  - Benchmark: Arena[MbBump, MbGenStore] vs Arena[CFFIBump, CGenStore]
 ```
 
 ### Phase 3 — Typed Arena
 
-Scope: Storable trait + TypedRef + domain-specific arenas.
-
 ```
 Deliverables:
-  - Storable trait with byte_size/write_to/read_from
-  - Storable implementations for Double, Int, AudioFrame
-  - F64Arena, AudioArena (Pattern A specialization)
+  - Storable trait
+  - Storable for Double, Int
+  - F64Arena[B, G], AudioFrameArena[B, G] (manual specialization)
   - TypedRef[T]
   - Tests: type safety, round-trip serialization
 ```
 
 ### Phase 4 — Domain Integration
 
-Scope: Wire arenas into DSP pipeline, parser, incr.
-
 ```
 Deliverables:
-  - AudioBufferPool integrated with Web Audio / VST callback
-  - ASTArena integrated with incremental parser
-  - incr generation synchronization with Arena.generation
-  - Profiling: identify hot paths, downgrade to Level 0 where needed
+  - AudioBufferPool[CFFIBump, CGenStore] in DSP pipeline
+  - ASTArena[MbBump, MbGenStore] in parser
+  - incr generation synchronization
+  - Profile and downgrade hot paths to Level 0
 ```
 
 ### Phase 5 — Extensions (as needed)
 
 ```
-Candidates:
-  - GrowableArena for parser/CRDT
+  - GrowableArena[B, G]
   - Code generation for TypedArena boilerplate
-  - Memory usage statistics / visualization
-  - DST (Deterministic Simulation Testing) integration
+  - Memory statistics / visualization
+  - DST integration
 ```
 
 ---
@@ -710,16 +635,14 @@ Candidates:
 | `MbGenStore` | L2 | struct | Array[Int]-backed generation store |
 | `CGenStore` | L2 | struct | C int*-backed generation store |
 | `Ref` | L2 | struct | Generational index (index + generation) |
-| `Arena` | L2 | struct | Slot-based allocator with generation tracking |
+| `Arena[B, G]` | L2 | struct | Slot-based allocator, generic over backend |
 | `Storable` | L3 | trait | Fixed-size serialization to/from bytes |
 | `TypedRef[T]` | L3 | struct | Type-tagged arena reference |
-| `TypedArena[T]` | L3 | struct | Type-specialized arena |
-| `BumpImpl` | Config | enum | Switches between MbBump and CFFIBump |
-| `GenStoreImpl` | Config | enum | Switches between MbGenStore and CGenStore |
-| `AudioBufferPool` | Domain | struct | DSP buffer pool |
-| `ASTArena` | Domain | struct | Parser AST node arena |
-| `CRDTOpPool` | Domain | struct | CRDT operation batch pool |
-| `GrowableArena` | Extension | struct | Chunk-chained growable arena |
+| `F64Arena[B, G]` | L3 | struct | Double-specialized typed arena |
+| `AudioBufferPool[B, G]` | Domain | struct | DSP buffer pool |
+| `ASTArena[B, G]` | Domain | struct | Parser AST node arena |
+| `CRDTOpPool[B, G]` | Domain | struct | CRDT operation batch pool |
+| `GrowableArena[B, G]` | Extension | struct | Chunk-chained growable arena |
 | `GrowableRef` | Extension | struct | Ref with chunk index |
 
 ### §13.2 All Traits
@@ -727,8 +650,8 @@ Candidates:
 | Trait | Methods | Implementors |
 |-------|---------|-------------|
 | `BumpAllocator` | `alloc`, `reset`, `capacity`, `used` | `MbBump`, `CFFIBump` |
-| `GenStore` | `get`, `set`, `length`, `invalidate_all` | `MbGenStore`, `CGenStore` |
-| `Storable` | `byte_size`, `write_to`, `read_from` | `Double`, `Int`, user types |
+| `GenStore` | `get`, `set`, `length` | `MbGenStore`, `CGenStore` |
+| `Storable` | `byte_size`, `write_bytes`, `read_bytes` | `Double`, `Int`, user types |
 
 ### §13.3 Safety Level by Operation
 
@@ -739,8 +662,16 @@ Candidates:
 | `Arena::slot_offset` | 2 | Generation + bounds | `Int?` |
 | `Arena::get_checked` | 2 | Generation + bounds | `Bytes?` |
 | `Arena::get_unchecked` | 0 | None | `Bytes` |
-| `TypedArena::alloc` | 3 | Type + bounds | `TypedRef[T]?` |
-| `TypedArena::get` | 3 | Type + generation | `T?` |
+
+### §13.4 Backend Configurations
+
+| Configuration | B | G | Target | GC-free | Use case |
+|--------------|---|---|--------|---------|----------|
+| Debug | `MbBump` | `MbGenStore` | All backends | No | Development, wasm-gc, JS |
+| Release | `CFFIBump` | `CGenStore` | Native only | Yes | Real-time DSP, perf-critical |
+| Hybrid | `CFFIBump` | `MbGenStore` | Native only | Partial | GC-free memory, MoonBit-side checks |
+
+All three compile to fully specialized code. No runtime cost for switching.
 
 ---
 
@@ -748,12 +679,12 @@ Candidates:
 
 ```
 Definitions:
-    Arena = (bump, gen_store, G, count, slot_size)
-    Ref   = (index, generation)
+    Arena[B, G] = (bump: B, gen_store: G, G_current: Int, count: Int, slot_size: Int)
+    Ref         = (index: Int, generation: Int)
 
 Validity:
     valid(r, a) ⟺ r.index < a.count
-                  ∧ r.generation == a.G
+                  ∧ r.generation == a.G_current
                   ∧ a.gen_store[r.index] == r.generation
 
 Allocation:
@@ -762,16 +693,16 @@ Allocation:
         else
             let i = a.count
             a.bump.alloc(a.slot_size, align)
-            a.gen_store[i] ← a.G
+            a.gen_store[i] ← a.G_current
             a.count ← a.count + 1
-            Some(Ref(i, a.G))
+            Some(Ref(i, a.G_current))
 
     Postcondition: valid(result, a)
 
 Reset:
     reset(a) =
         a.bump.reset()
-        a.G ← a.G + 1
+        a.G_current ← a.G_current + 1
         a.count ← 0
 
     Postcondition: ∀r. ¬valid(r, a)
@@ -781,11 +712,9 @@ Read:
         if valid(r, a) then Some(a.bump.bytes_at(r.index * a.slot_size, a.slot_size))
         else None
 
-Typed allocation:
-    alloc_typed[T: Storable](a, v: T) =
-        match alloc(a) with
-        | None → None
-        | Some(r) →
-            v.write_to(a.bump, r.index * a.slot_size)
-            Some(TypedRef[T](r))
+Monomorphization guarantee:
+    ∀ concrete types B₁, G₁, B₂, G₂:
+      Arena[B₁, G₁]::alloc and Arena[B₂, G₂]::alloc
+      compile to separate, fully-specialized C functions
+      with zero indirection.
 ```
