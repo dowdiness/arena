@@ -1,14 +1,11 @@
 ///|
-#external
 priv type BumpPtr
 
 ///|
 extern "C" fn bump_create(capacity : Int) -> BumpPtr = "bump_create"
 
 ///|
-extern "C" fn bump_is_null(ptr : BumpPtr) -> Int = "bump_is_null"
-
-///|
+#borrow(ptr)
 extern "C" fn bump_destroy(ptr : BumpPtr) = "bump_destroy"
 
 ///|
@@ -58,9 +55,6 @@ pub struct CFFIBump {
 pub fn CFFIBump::new(capacity : Int) -> CFFIBump {
   let cap = if capacity < 0 { 0 } else { capacity }
   let ptr = bump_create(cap)
-  if bump_is_null(ptr) != 0 {
-    abort("CFFIBump::new: native allocation failed")
-  }
   { ptr, capacity_: cap, destroyed: false }
 }
 

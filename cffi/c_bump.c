@@ -2,30 +2,39 @@
 #include <string.h>
 #include <stdint.h>
 
+extern void* moonbit_make_external_object(void (*)(void*), int);
+
 typedef struct {
   char*    base;
   int32_t  offset;
   int32_t  capacity;
 } BumpArena;
 
+static void bump_finalize(void* self) {
+  BumpArena* a = (BumpArena*)self;
+  if (a->base) {
+    free(a->base);
+    a->base = NULL;
+  }
+}
+
 BumpArena* bump_create(int32_t capacity) {
-  BumpArena* a = (BumpArena*)malloc(sizeof(BumpArena));
-  if (!a) return NULL;
-  a->base = (char*)calloc(1, (size_t)capacity);
-  if (!a->base && capacity > 0) { free(a); return NULL; }
+  BumpArena* a = (BumpArena*)moonbit_make_external_object(bump_finalize, sizeof(BumpArena));
+  if (capacity > 0) {
+    a->base = (char*)calloc(1, (size_t)capacity);
+    if (!a->base) { abort(); }
+  } else {
+    a->base = NULL;
+  }
   a->offset = 0;
   a->capacity = capacity;
   return a;
 }
 
-int32_t bump_is_null(BumpArena* a) {
-  return a == NULL ? 1 : 0;
-}
-
 void bump_destroy(BumpArena* a) {
-  if (a) {
+  if (a->base) {
     free(a->base);
-    free(a);
+    a->base = NULL;
   }
 }
 

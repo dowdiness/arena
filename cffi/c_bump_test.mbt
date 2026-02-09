@@ -156,3 +156,23 @@ test "CFFIBump::byte methods are safe after destroy" {
   inspect(bump.write_byte(0, b'\x42'), content="false")
   inspect(bump.read_byte(0), content="None")
 }
+
+///|
+test "CFFIBump::works without explicit destroy (auto-finalization)" {
+  let bump = CFFIBump::new(32)
+  bump.alloc(8, 8) |> ignore
+  inspect(bump.write_double(0, 3.14), content="true")
+  inspect(bump.read_double(0), content="Some(3.14)")
+  // No destroy() — finalizer frees native memory when RC drops to 0
+}
+
+///|
+test "CFFIBump::destroy then finalizer (no double-free)" {
+  let bump = CFFIBump::new(16)
+  bump.alloc(4, 4) |> ignore
+  inspect(bump.write_int32(0, 42), content="true")
+  bump.destroy()
+  // After destroy, base is NULL; finalizer will see NULL and skip free
+  inspect(bump.write_int32(0, 99), content="false")
+  inspect(bump.read_int32(0), content="None")
+}

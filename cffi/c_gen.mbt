@@ -1,14 +1,11 @@
 ///|
-#external
 priv type GenPtr
 
 ///|
 extern "C" fn gen_create(length : Int) -> GenPtr = "gen_create"
 
 ///|
-extern "C" fn gen_is_null(ptr : GenPtr) -> Int = "gen_is_null"
-
-///|
+#borrow(ptr)
 extern "C" fn gen_destroy(ptr : GenPtr) = "gen_destroy"
 
 ///|
@@ -30,9 +27,6 @@ pub struct CGenStore {
 pub fn CGenStore::new(length : Int) -> CGenStore {
   let len = if length < 0 { 0 } else { length }
   let ptr = gen_create(len)
-  if gen_is_null(ptr) != 0 {
-    abort("CGenStore::new: native allocation failed")
-  }
   { ptr, length_: len, destroyed: false }
 }
 

@@ -4,18 +4,17 @@ Based on the design in `memory-management-design.md` (§12).
 
 ## Current State
 
-**Phase 4.1 (AudioBufferPool) is complete.** The DSP domain wrapper is
-implemented on top of the generic arena. `AudioBufferPool[B, G]` provides
-multi-sample buffer management for real-time DSP: `BufferRef`-indexed buffers
-with frame/channel sample access, overflow-safe construction, and per-callback
-lifecycle (reset → alloc → write → read). The `BumpAllocator` trait now also
-includes byte-level read/write (`write_byte`/`read_byte`). Next: hybrid C-FFI
-lifetime management via `moonbit_make_external_object`, then dogfooding in a
-real DSP pipeline. 144 tests passing on native, 88 on wasm-gc. Module:
-`dowdiness/arena` (Apache-2.0).
+**Phase 5 (Hybrid C-FFI Lifetime Management) is complete.** C-FFI objects
+(`CFFIBump`, `CGenStore`) now use `moonbit_make_external_object` for automatic
+finalization — native memory is freed when the last MoonBit reference is
+dropped. `destroy()` remains for deterministic early release (e.g., audio engine
+reconfiguration). All hot-path operations use `#borrow` — zero RC overhead.
+Next: dogfooding in a real DSP pipeline. 149 tests passing on native, 88 on
+wasm-gc. Module: `dowdiness/arena` (Apache-2.0).
 
 Implemented: `BumpAllocator` trait (with byte methods), `GenStore` trait,
-`MbBump`, `MbGenStore`, `CFFIBump` (native), `CGenStore` (native), `Ref`,
+`MbBump`, `MbGenStore`, `CFFIBump` (native, RC-managed with auto-finalization),
+`CGenStore` (native, RC-managed with auto-finalization), `Ref`,
 `Arena[B, G]` with typed read/write, generational stale-ref detection, O(1)
 reset, `Storable` trait (Double, Int, AudioFrame), `TypedRef[T]`,
 `F64Arena[B, G]`, `I32Arena[B, G]`, `AudioArena[B, G]`, `AudioFrame`,
@@ -213,22 +212,9 @@ Native-only `cffi/` sub-package using `targets` conditional compilation in moon.
 - `c_bump.c` / `c_bump.mbt` — `CFFIBump` struct with `BumpPtr`, implements `BumpAllocator`
 - `c_gen.c` / `c_gen.mbt` — `CGenStore` struct with `GenPtr`, implements `GenStore`
 - `cffi.mbt` — `new_arena()` convenience constructor returning `Arena[CFFIBump, CGenStore]`
-- Safety: null-pointer abort on allocation failure, `destroyed` flag prevents use-after-free/double-free, bounds-checked indices before FFI boundary
-- `destroy()` methods for explicit deterministic native memory cleanup
-
-**Lifetime management (planned: hybrid approach with `moonbit_make_external_object`):**
-
-Currently `BumpPtr`/`GenPtr` use `#external` (no RC, manual `destroy()` required).
-The planned hybrid approach uses `moonbit_make_external_object` for automatic
-finalization while keeping `destroy()` for deterministic early release:
-
-- `BumpPtr`/`GenPtr` change from `#external type` to plain abstract `type` (RC-managed)
-- C `bump_create`/`gen_create` use `moonbit_make_external_object` with finalize callbacks
-- Finalizers free inner data buffers (`base`/`data`); the runtime frees the object itself
-- `destroy()` becomes optional early release — sets buffer pointer to NULL
-- Finalizers check for NULL to prevent double-free
-- All hot-path operations use `#borrow(ptr)` — zero RC overhead on data path
-- RC overhead limited to handle creation/destruction (typically once at startup/shutdown)
+- Safety: `destroyed` flag prevents use-after-destroy, bounds-checked indices before FFI boundary
+- `destroy()` methods for explicit deterministic native memory cleanup (optional since Phase 5)
+- Hybrid lifetime management via `moonbit_make_external_object` (implemented in Phase 5): automatic finalization when RC drops to 0, `destroy()` for deterministic early release, zero RC overhead on hot path via `#borrow`
 
 ### File layout (Phase 2)
 
@@ -494,38 +480,43 @@ Modified files:
 
 ---
 
-## Phase 5 — Hybrid C-FFI Lifetime Management
+## Phase 5 — Hybrid C-FFI Lifetime Management (implemented)
 
 **Goal:** Replace manual `destroy()` requirement with automatic finalization via
 `moonbit_make_external_object`, while keeping `destroy()` for deterministic early
 release. See `memory-management-design.md` §5.3 for full design rationale.
 
-### 5.1 CFFIBump finalization
+### 5.1 CFFIBump finalization (implemented)
 
-- Refactor `bump_create` to use `moonbit_make_external_object(bump_finalize, sizeof(BumpArena))`
-- Add `bump_finalize(void* self)` — frees `base` only, sets `base = NULL`
-- Update `bump_destroy` — frees `base`, sets `base = NULL` (no `free(a)` — runtime frees the object)
-- Change `BumpPtr` from `#external type` to plain `type` (RC-managed)
-- Remove `bump_is_null` (replaced by `moonbit_make_external_object` failure handling)
+- `bump_create` uses `moonbit_make_external_object(bump_finalize, sizeof(BumpArena))`
+- `bump_finalize(void* self)` — frees `base` only if non-NULL, sets `base = NULL`
+- `bump_destroy` — frees `base`, sets `base = NULL` (does not `free(a)` — runtime frees the object)
+- `BumpPtr` changed from `#external type` to plain `type` (RC-managed)
+- Removed `bump_is_null` (allocation failure aborts in C via `abort()`)
+- Added `#borrow(ptr)` annotation on `bump_destroy` FFI declaration
 
-### 5.2 CGenStore finalization
+### 5.2 CGenStore finalization (implemented)
 
-- Same pattern for `gen_create`/`gen_finalize`/`gen_destroy`
-- Change `GenPtr` from `#external type` to plain `type` (RC-managed)
-- Remove `gen_is_null`
+- Same pattern: `gen_create` uses `moonbit_make_external_object(gen_finalize, sizeof(GenArray))`
+- `gen_finalize(void* self)` — frees `data` only if non-NULL, sets `data = NULL`
+- `GenPtr` changed from `#external type` to plain `type` (RC-managed)
+- Removed `gen_is_null`
 
-### 5.3 Safety invariants
+### 5.3 Safety invariants (verified)
 
-- `destroyed` flag remains: guards use-after-destroy and double-free
+- `destroyed` flag remains: guards use-after-destroy on MoonBit side
 - Finalizer checks `base == NULL` / `data == NULL` to skip if already destroyed
 - All hot-path operations keep `#borrow(ptr)` — zero RC overhead on data path
+- `#borrow(ptr)` on `destroy` FFI calls prevents RC from dropping during the call
 
-### 5.4 Tests
+### 5.4 Tests (5 new, 149 total native)
 
-- Verify automatic cleanup (arena goes out of scope without explicit destroy)
-- Verify explicit destroy + finalizer interaction (no double-free)
-- Verify hot-path operations still use `#borrow` (no RC overhead)
-- Update all existing CFFIBump/CGenStore tests for new behavior
+- CFFIBump: auto-finalization (no explicit destroy), destroy+finalizer no double-free
+- CGenStore: auto-finalization (no explicit destroy), destroy+finalizer no double-free
+- Arena[CFFIBump, CGenStore]: full usage without explicit destroy
+- All 144 existing tests pass unchanged (backward compatible)
+
+Total: 88 tests wasm-gc, 149 tests native.
 
 ---
 
@@ -571,7 +562,7 @@ library is proven in DSP use cases. The core Arena API and `write_byte`/`read_by
 | Phase 2 dispatch mechanism | Generic type params (not enum dispatch) | MoonBit monomorphizes generics — zero dispatch overhead, no runtime cost vs enum match |
 | Phase 2 package structure | Traits in root, C-FFI in `cffi/` sub-package | No restructuring needed; `targets` conditional compilation isolates native-only code |
 | C-FFI safety | Abort on null + destroyed flag + bounds checks | Fail fast on allocation failure; prevent use-after-free, double-free, and OOB writes before crossing FFI boundary |
-| C-FFI lifetime (planned) | Hybrid: `moonbit_make_external_object` + `destroy()` | Automatic finalization prevents leaks; explicit `destroy()` for deterministic cleanup in DSP reconfiguration; `#borrow` on all ops means zero RC overhead on hot path |
+| C-FFI lifetime (Phase 5) | Hybrid: `moonbit_make_external_object` + `destroy()` | Automatic finalization prevents leaks; explicit `destroy()` for deterministic cleanup in DSP reconfiguration; `#borrow` on all ops means zero RC overhead on hot path |
 | new_with preconditions | Abort on non-empty bump, clamp max_slots | Prevents silent invariant violations (wrong slot offsets, OOB gen_store access) |
 | Typed alloc write failure | Abort (contract violation) | Successful `alloc` must guarantee writable initialized slots; avoid silent slot leaks |
 | Storable trait signature | Byte-array based (`FixedArray[Byte]`) | MoonBit doesn't support generic type params on trait methods; byte-array is the viable design |

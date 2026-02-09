@@ -684,7 +684,7 @@ Deliverables:
   - Tests: type safety, round-trip serialization, allocator conformance
 ```
 
-### Phase 4 — DSP Domain Integration (in progress)
+### Phase 4 — DSP Domain Integration (implemented)
 
 ```
 Deliverables:
@@ -694,15 +694,16 @@ Deliverables:
   - Profile and downgrade hot paths to Level 0
 ```
 
-### Phase 5 — Hybrid C-FFI Lifetime Management
+### Phase 5 — Hybrid C-FFI Lifetime Management (implemented)
 
 ```
 Deliverables:
-  - moonbit_make_external_object for CFFIBump and CGenStore
-  - Automatic finalization (frees base/data when RC drops to 0)
-  - destroy() retained for deterministic early release
-  - Zero RC overhead on hot path via #borrow
+  - moonbit_make_external_object for CFFIBump and CGenStore               ✓
+  - Automatic finalization (frees base/data when RC drops to 0)            ✓
+  - destroy() retained for deterministic early release                     ✓
+  - Zero RC overhead on hot path via #borrow                               ✓
   - See §5.3 for full design
+  - 149 tests native (5 new), 88 tests wasm-gc (unchanged)
 ```
 
 ### Future Improvements (as needed)

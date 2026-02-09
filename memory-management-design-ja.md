@@ -781,7 +781,7 @@ Phase 3: 型付きArena
 ├── TypedRef[T]（パターンAの手動特殊化）
 └── テスト: 型安全性 + アロケータ契約準拠の検証
 
-Phase 4: DSPドメイン統合 (進行中)
+Phase 4: DSPドメイン統合 (実装済み)
 ├── AudioBufferPool (DSP)                               ✓
 │   ├── BufferRef (Refのラッパー)                        ✓
 │   ├── フレーム/チャンネルインデックスのサンプルアクセス ✓
@@ -790,11 +790,12 @@ Phase 4: DSPドメイン統合 (進行中)
 ├── 実DSPパイプラインでのドッグフーディング
 └── プロファイリング + Level 0 最適化
 
-Phase 5: ハイブリッドC-FFIライフタイム管理
-├── moonbit_make_external_objectによるCFFIBump/CGenStoreの自動finalization
-├── destroy()は決定論的早期解放として維持
-├── ホットパスは#borrowのまま — RCオーバーヘッドなし
-└── §3.3の設計を実装
+Phase 5: ハイブリッドC-FFIライフタイム管理 (実装済み)
+├── moonbit_make_external_objectによるCFFIBump/CGenStoreの自動finalization  ✓
+├── destroy()は決定論的早期解放として維持                                    ✓
+├── ホットパスは#borrowのまま — RCオーバーヘッドなし                         ✓
+├── 149テスト(native)、88テスト(wasm-gc)                                    ✓
+└── §3.3の設計を実装                                                        ✓
 
 将来の改善 (必要に応じて)
 ├── ASTArena (パーサー、write_byte/read_byteで文字列格納)

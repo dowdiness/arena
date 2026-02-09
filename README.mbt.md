@@ -33,7 +33,7 @@ arena.is_valid(ref)  // false — stale ref detected
 - **Overflow-safe arithmetic** — all allocation and bounds checks handle integer overflow
 - **Strict allocator contract** — typed arenas abort on post-alloc write failures (contract violation)
 - **Recoverable API failures** — stale/invalid access returns `Option`/`Bool`
-- **FFI safety** — null-pointer checks, destroy-safety flags, bounds validation before FFI boundary
+- **FFI safety** — automatic finalization via `moonbit_make_external_object`, destroy-safety flags, bounds validation before FFI boundary
 
 ## API
 
@@ -105,15 +105,15 @@ Per-callback lifecycle: `reset()` → `alloc()` → `write_sample()` → `read_s
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `new_arena` | `(Int, Int) -> Arena[CFFIBump, CGenStore]` | Create arena with C-FFI backends |
-| `CFFIBump::destroy` | `(Self) -> Unit` | Free native memory early (idempotent) |
-| `CGenStore::destroy` | `(Self) -> Unit` | Free native memory early (idempotent) |
+| `CFFIBump::destroy` | `(Self) -> Unit` | Free native memory early (optional, idempotent) |
+| `CGenStore::destroy` | `(Self) -> Unit` | Free native memory early (optional, idempotent) |
 
-**Lifetime management (planned):** Currently `destroy()` must be called manually
-to free native memory. A planned upgrade will use `moonbit_make_external_object`
-for automatic finalization — native memory will be freed when the last MoonBit
-reference is dropped. `destroy()` will remain available for deterministic early
-release (e.g., audio engine reconfiguration). All hot-path operations use
-`#borrow`, so there is zero RC overhead on the data path.
+**Lifetime management:** C-FFI objects use `moonbit_make_external_object` for
+automatic finalization — native memory is freed when the last MoonBit reference
+is dropped. `destroy()` is optional and available for deterministic early release
+(e.g., audio engine reconfiguration). Calling `destroy()` then letting the
+finalizer run is safe (no double-free). All hot-path operations use `#borrow`,
+so there is zero RC overhead on the data path.
 
 ## Build
 
@@ -122,7 +122,7 @@ moon check                    # Typecheck (wasm-gc)
 moon check --target native    # Typecheck including cffi
 moon build                    # Build
 moon test                     # Run root tests (88 tests, wasm-gc)
-moon test --target native     # Run all tests including cffi (144 tests)
+moon test --target native     # Run all tests including cffi (149 tests)
 moon bench                    # Run MbBump benchmarks (wasm-gc)
 moon bench --target native    # Run all benchmarks including CFFIBump
 moon run cmd/main             # Run demo
@@ -156,7 +156,7 @@ See `ROADMAP.md` §2.x for full benchmark results and methodology.
 
 ## Status
 
-Phase 4.1 (AudioBufferPool) is complete. See `ROADMAP.md` for the full implementation plan including remaining domain integrations.
+Phase 5 (Hybrid C-FFI Lifetime Management) is complete. C-FFI objects auto-finalize via `moonbit_make_external_object`; `destroy()` is optional for deterministic early release. See `ROADMAP.md` for the full implementation plan including remaining domain integrations.
 
 ## License
 

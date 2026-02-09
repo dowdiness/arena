@@ -76,3 +76,23 @@ test "panic CGenStore::get aborts on out-of-bounds index" {
   let store = CGenStore::new(4)
   store.get(4) |> ignore
 }
+
+///|
+test "CGenStore::works without explicit destroy (auto-finalization)" {
+  let store = CGenStore::new(4)
+  store.set(0, 42)
+  store.set(1, 99)
+  inspect(store.get(0), content="42")
+  inspect(store.get(1), content="99")
+  // No destroy() — finalizer frees native memory when RC drops to 0
+}
+
+///|
+test "CGenStore::destroy then finalizer (no double-free)" {
+  let store = CGenStore::new(4)
+  store.set(0, 42)
+  inspect(store.get(0), content="42")
+  store.destroy()
+  // After destroy, data is NULL; finalizer will see NULL and skip free
+  store.destroy() // second destroy is also safe
+}

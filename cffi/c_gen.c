@@ -2,28 +2,37 @@
 #include <string.h>
 #include <stdint.h>
 
+extern void* moonbit_make_external_object(void (*)(void*), int);
+
 typedef struct {
   int32_t* data;
   int32_t  length;
 } GenArray;
 
+static void gen_finalize(void* self) {
+  GenArray* g = (GenArray*)self;
+  if (g->data) {
+    free(g->data);
+    g->data = NULL;
+  }
+}
+
 GenArray* gen_create(int32_t length) {
-  GenArray* g = (GenArray*)malloc(sizeof(GenArray));
-  if (!g) return NULL;
-  g->data = (int32_t*)calloc((size_t)length, sizeof(int32_t));
-  if (!g->data && length > 0) { free(g); return NULL; }
+  GenArray* g = (GenArray*)moonbit_make_external_object(gen_finalize, sizeof(GenArray));
+  if (length > 0) {
+    g->data = (int32_t*)calloc((size_t)length, sizeof(int32_t));
+    if (!g->data) { abort(); }
+  } else {
+    g->data = NULL;
+  }
   g->length = length;
   return g;
 }
 
-int32_t gen_is_null(GenArray* g) {
-  return g == NULL ? 1 : 0;
-}
-
 void gen_destroy(GenArray* g) {
-  if (g) {
+  if (g->data) {
     free(g->data);
-    free(g);
+    g->data = NULL;
   }
 }
 

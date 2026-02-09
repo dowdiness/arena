@@ -109,3 +109,18 @@ test "Arena[CFFIBump, CGenStore]::get_count and get_max_slots" {
   arena.alloc() |> ignore
   inspect(arena.get_count(), content="2")
 }
+
+///|
+test "Arena[CFFIBump, CGenStore]::works without explicit destroy (auto-finalization)" {
+  let arena = new_arena(4, 16)
+  let r = arena.alloc().unwrap()
+  inspect(arena.write_double(r, 0, 3.14), content="true")
+  inspect(arena.read_double(r, 0), content="Some(3.14)")
+  inspect(arena.write_int32(r, 8, 42), content="true")
+  inspect(arena.read_int32(r, 8), content="Some(42)")
+  arena.reset()
+  inspect(arena.is_valid(r), content="false")
+  let r2 = arena.alloc().unwrap()
+  inspect(arena.is_valid(r2), content="true")
+  // No destroy() — finalizer frees both CFFIBump and CGenStore native memory
+}
