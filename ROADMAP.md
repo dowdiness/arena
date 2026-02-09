@@ -4,13 +4,14 @@ Based on the design in `memory-management-design.md` (§12).
 
 ## Current State
 
-**Phase 4.1 (AudioBufferPool) is complete.** The first domain-specific wrapper
-is implemented on top of the generic arena. `AudioBufferPool[B, G]` provides
+**Phase 4.1 (AudioBufferPool) is complete.** The DSP domain wrapper is
+implemented on top of the generic arena. `AudioBufferPool[B, G]` provides
 multi-sample buffer management for real-time DSP: `BufferRef`-indexed buffers
 with frame/channel sample access, overflow-safe construction, and per-callback
 lifecycle (reset → alloc → write → read). The `BumpAllocator` trait now also
-includes byte-level read/write (`write_byte`/`read_byte`) for future ASTArena
-string storage. 144 tests passing on native, 88 on wasm-gc. Module:
+includes byte-level read/write (`write_byte`/`read_byte`). Next: hybrid C-FFI
+lifetime management via `moonbit_make_external_object`, then dogfooding in a
+real DSP pipeline. 144 tests passing on native, 88 on wasm-gc. Module:
 `dowdiness/arena` (Apache-2.0).
 
 Implemented: `BumpAllocator` trait (with byte methods), `GenStore` trait,
@@ -209,11 +210,25 @@ originally planned enum dispatch approach.
 
 Native-only `cffi/` sub-package using `targets` conditional compilation in moon.pkg.json.
 
-- `c_bump.c` / `c_bump.mbt` — `CFFIBump` struct with opaque `BumpPtr`, implements `BumpAllocator`
-- `c_gen.c` / `c_gen.mbt` — `CGenStore` struct with opaque `GenPtr`, implements `GenStore`
+- `c_bump.c` / `c_bump.mbt` — `CFFIBump` struct with `BumpPtr`, implements `BumpAllocator`
+- `c_gen.c` / `c_gen.mbt` — `CGenStore` struct with `GenPtr`, implements `GenStore`
 - `cffi.mbt` — `new_arena()` convenience constructor returning `Arena[CFFIBump, CGenStore]`
 - Safety: null-pointer abort on allocation failure, `destroyed` flag prevents use-after-free/double-free, bounds-checked indices before FFI boundary
-- Manual `destroy()` methods for explicit native memory cleanup
+- `destroy()` methods for explicit deterministic native memory cleanup
+
+**Lifetime management (planned: hybrid approach with `moonbit_make_external_object`):**
+
+Currently `BumpPtr`/`GenPtr` use `#external` (no RC, manual `destroy()` required).
+The planned hybrid approach uses `moonbit_make_external_object` for automatic
+finalization while keeping `destroy()` for deterministic early release:
+
+- `BumpPtr`/`GenPtr` change from `#external type` to plain abstract `type` (RC-managed)
+- C `bump_create`/`gen_create` use `moonbit_make_external_object` with finalize callbacks
+- Finalizers free inner data buffers (`base`/`data`); the runtime frees the object itself
+- `destroy()` becomes optional early release — sets buffer pointer to NULL
+- Finalizers check for NULL to prevent double-free
+- All hot-path operations use `#borrow(ptr)` — zero RC overhead on data path
+- RC overhead limited to handle creation/destruction (typically once at startup/shutdown)
 
 ### File layout (Phase 2)
 
@@ -406,9 +421,10 @@ arena/
 
 ---
 
-## Phase 4 — Domain Integration
+## Phase 4 — DSP Domain Integration
 
-**Goal:** Domain-specific wrappers for real use cases.
+**Goal:** Audio/DSP-specific wrappers. Dogfood the library in a real DSP pipeline.
+Other domain integrations (ASTArena, incr, CRDT) are deferred to future improvements.
 
 ### 4.1 AudioBufferPool (§8.1) — implemented
 
@@ -476,27 +492,68 @@ Modified files:
 - `mb_bump_test.mbt` — byte method tests
 - `cffi/c_bump_test.mbt` — CFFIBump byte method + destroy safety tests
 
-### 4.2 ASTArena (§8.2)
+---
 
-- Dual-arena (node_arena + string_arena)
-- StringRef for variable-length data
-- Phase lifecycle: parse → convert → reset
-- Uses `write_byte`/`read_byte` for string storage
+## Phase 5 — Hybrid C-FFI Lifetime Management
 
-### 4.3 incr generation synchronization
+**Goal:** Replace manual `destroy()` requirement with automatic finalization via
+`moonbit_make_external_object`, while keeping `destroy()` for deterministic early
+release. See `memory-management-design.md` §5.3 for full design rationale.
 
-- Mechanism to tie MemoTable generation to Arena generation
+### 5.1 CFFIBump finalization
+
+- Refactor `bump_create` to use `moonbit_make_external_object(bump_finalize, sizeof(BumpArena))`
+- Add `bump_finalize(void* self)` — frees `base` only, sets `base = NULL`
+- Update `bump_destroy` — frees `base`, sets `base = NULL` (no `free(a)` — runtime frees the object)
+- Change `BumpPtr` from `#external type` to plain `type` (RC-managed)
+- Remove `bump_is_null` (replaced by `moonbit_make_external_object` failure handling)
+
+### 5.2 CGenStore finalization
+
+- Same pattern for `gen_create`/`gen_finalize`/`gen_destroy`
+- Change `GenPtr` from `#external type` to plain `type` (RC-managed)
+- Remove `gen_is_null`
+
+### 5.3 Safety invariants
+
+- `destroyed` flag remains: guards use-after-destroy and double-free
+- Finalizer checks `base == NULL` / `data == NULL` to skip if already destroyed
+- All hot-path operations keep `#borrow(ptr)` — zero RC overhead on data path
+
+### 5.4 Tests
+
+- Verify automatic cleanup (arena goes out of scope without explicit destroy)
+- Verify explicit destroy + finalizer interaction (no double-free)
+- Verify hot-path operations still use `#borrow` (no RC overhead)
+- Update all existing CFFIBump/CGenStore tests for new behavior
 
 ---
 
-## Phase 5 — Extensions
+## Future Improvements
 
-Low priority. Implement as needed.
+Low priority. Implement as needed. The library will be dogfooded in a real DSP
+pipeline first. Other domain integrations are deferred until the core API is
+validated through production DSP use.
+
+### Audio / DSP Extensions
+
+- **get_unchecked / set_unchecked**: Level 0 unsafe access for profiled DSP hot paths
+- **Memory statistics**: usage tracking and visualization for buffer pools
+
+### Other Domain Integrations (deferred)
+
+These were originally planned as Phase 4.2–4.3 but are deferred until the
+library is proven in DSP use cases. The core Arena API and `write_byte`/`read_byte`
+(already implemented) provide the foundation when these are needed.
+
+- **ASTArena** (§8.2): dual-arena (node_arena + string_arena), StringRef, parse/convert/reset lifecycle. Uses `write_byte`/`read_byte` for string storage.
+- **incr generation synchronization**: mechanism to tie MemoTable generation to Arena generation
+- **CRDTOpPool** (§8.3): batch operation pool
+
+### Infrastructure
 
 - **GrowableArena** (§10): chunk-chained arena for unknown-size inputs
 - **Code generation**: auto-generate Pattern A TypedArena specializations
-- **Memory statistics**: usage tracking and visualization
-- **get_unchecked**: Level 0 unsafe access for profiled hot paths
 
 ---
 
@@ -514,6 +571,7 @@ Low priority. Implement as needed.
 | Phase 2 dispatch mechanism | Generic type params (not enum dispatch) | MoonBit monomorphizes generics — zero dispatch overhead, no runtime cost vs enum match |
 | Phase 2 package structure | Traits in root, C-FFI in `cffi/` sub-package | No restructuring needed; `targets` conditional compilation isolates native-only code |
 | C-FFI safety | Abort on null + destroyed flag + bounds checks | Fail fast on allocation failure; prevent use-after-free, double-free, and OOB writes before crossing FFI boundary |
+| C-FFI lifetime (planned) | Hybrid: `moonbit_make_external_object` + `destroy()` | Automatic finalization prevents leaks; explicit `destroy()` for deterministic cleanup in DSP reconfiguration; `#borrow` on all ops means zero RC overhead on hot path |
 | new_with preconditions | Abort on non-empty bump, clamp max_slots | Prevents silent invariant violations (wrong slot offsets, OOB gen_store access) |
 | Typed alloc write failure | Abort (contract violation) | Successful `alloc` must guarantee writable initialized slots; avoid silent slot leaks |
 | Storable trait signature | Byte-array based (`FixedArray[Byte]`) | MoonBit doesn't support generic type params on trait methods; byte-array is the viable design |

@@ -180,25 +180,49 @@ Traits stay in root package; C-FFI in `cffi/` sub-package.
 - [x] CFFIBump byte read/write + destroy safety tests
 - [x] All 88 tests pass on wasm-gc, 144 on native
 
-### 4.2 ASTArena
+---
 
-- [ ] Define `ASTArena` struct (node_arena + string_arena)
-- [ ] Define `StringRef` struct
-- [ ] Implement phase lifecycle (parse/convert/reset)
-- [ ] Tests with mock AST nodes
+## Phase 5 — Hybrid C-FFI Lifetime Management
 
-### 4.3 incr integration
+### 5.1 CFFIBump finalization
 
-- [ ] Design generation synchronization mechanism
-- [ ] Implement MemoEntry with generation field
-- [ ] Tests: staleness detection on Arena reset
+- [ ] C side: refactor `bump_create` to use `moonbit_make_external_object(bump_finalize, sizeof(BumpArena))`
+- [ ] C side: add `bump_finalize(void* self)` — free `base` only, set `base = NULL`
+- [ ] C side: update `bump_destroy` — free `base`, set `base = NULL` (no `free(a)`)
+- [ ] MoonBit side: change `BumpPtr` from `#external type` to plain `type` (RC-managed)
+- [ ] MoonBit side: remove `bump_is_null` (replaced by `moonbit_make_external_object` failure handling)
+- [ ] Update `destroyed` flag: now guards use-after-destroy and double-free (no longer leak prevention)
+
+### 5.2 CGenStore finalization
+
+- [ ] C side: same pattern for `gen_create`/`gen_finalize`/`gen_destroy`
+- [ ] MoonBit side: change `GenPtr` from `#external type` to plain `type` (RC-managed)
+- [ ] MoonBit side: remove `gen_is_null`
+
+### 5.3 Tests
+
+- [ ] Tests: verify automatic cleanup (arena goes out of scope without explicit destroy)
+- [ ] Tests: verify explicit destroy + finalizer interaction (no double-free)
+- [ ] Tests: verify hot-path operations still use `#borrow` (no RC overhead)
+- [ ] Update all existing CFFIBump/CGenStore tests for new behavior
 
 ---
 
-## Phase 5 — Extensions
+## Future Improvements
+
+### Audio / DSP Extensions
+
+- [ ] `get_unchecked` / `set_unchecked` (Level 0 unsafe access for profiled DSP hot paths)
+- [ ] Memory usage statistics
+
+### Other Domain Integrations
+
+- [ ] ASTArena (node_arena + string_arena, StringRef, parse/convert/reset lifecycle)
+- [ ] incr generation synchronization (MemoEntry with generation field)
+- [ ] CRDTOpPool
+
+### Infrastructure
 
 - [ ] GrowableArena (chunk-chained arena)
 - [ ] GrowableRef (Ref with chunk_index)
-- [ ] `get_unchecked` / `set_unchecked` (Level 0 unsafe access)
-- [ ] Memory usage statistics
 - [ ] Code generation for TypedArena boilerplate

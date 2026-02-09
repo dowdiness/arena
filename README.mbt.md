@@ -105,8 +105,15 @@ Per-callback lifecycle: `reset()` → `alloc()` → `write_sample()` → `read_s
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `new_arena` | `(Int, Int) -> Arena[CFFIBump, CGenStore]` | Create arena with C-FFI backends |
-| `CFFIBump::destroy` | `(Self) -> Unit` | Free native memory (idempotent) |
-| `CGenStore::destroy` | `(Self) -> Unit` | Free native memory (idempotent) |
+| `CFFIBump::destroy` | `(Self) -> Unit` | Free native memory early (idempotent) |
+| `CGenStore::destroy` | `(Self) -> Unit` | Free native memory early (idempotent) |
+
+**Lifetime management (planned):** Currently `destroy()` must be called manually
+to free native memory. A planned upgrade will use `moonbit_make_external_object`
+for automatic finalization — native memory will be freed when the last MoonBit
+reference is dropped. `destroy()` will remain available for deterministic early
+release (e.g., audio engine reconfiguration). All hot-path operations use
+`#borrow`, so there is zero RC overhead on the data path.
 
 ## Build
 

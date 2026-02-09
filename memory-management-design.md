@@ -145,27 +145,89 @@ Contract note for implementers:
 
 ### §5.3 Implementation A: CFFIBump (native only, GC-free)
 
-Backed by `malloc`-allocated memory on the C side.
-MoonBit holds an opaque pointer; a finalizer calls `free` on GC collection.
+Backed by C-allocated memory. The `BumpArena` struct is embedded as the payload
+of a MoonBit external object created via `moonbit_make_external_object`. This
+gives automatic finalization: when the last MoonBit reference to `CFFIBump` is
+dropped, the runtime calls the finalize callback, which frees the inner `base`
+buffer. An explicit `destroy()` method is retained for deterministic early
+release (e.g., audio engine reconfiguration).
+
+**Lifetime management (hybrid approach):**
+
+```
+Creation:
+  bump_create(capacity) calls moonbit_make_external_object(bump_finalize, sizeof(BumpArena))
+  → returns RC-managed MoonBit object with BumpArena as payload
+  → MoonBit tracks references automatically
+
+Normal usage (hot path):
+  All operations (alloc, reset, write_*, read_*) use #borrow(ptr)
+  → zero RC increment/decrement on hot path
+  → data buffer is malloc'd, GC-free
+
+Cleanup (two paths, both safe):
+  Path A — Automatic: last reference dropped → RC hits 0 → bump_finalize() frees base
+  Path B — Explicit: user calls destroy() → frees base immediately, sets destroyed flag
+  → finalizer checks for NULL base, skips if already freed (no double-free)
+```
 
 **C interface:**
 
 ```c
-typedef struct { char* base; size_t offset; size_t capacity; } BumpArena;
+typedef struct { char* base; int32_t offset; int32_t capacity; } BumpArena;
 
-BumpArena* bump_create(size_t capacity);
-size_t     bump_alloc(BumpArena* a, size_t size, size_t align);
-void       bump_reset(BumpArena* a);
-void       bump_destroy(BumpArena* a);
+void*   bump_create(int32_t capacity);     // returns moonbit_make_external_object
+void    bump_finalize(void* self);         // frees base only (runtime frees object)
+void    bump_destroy(BumpArena* a);        // explicit early release: frees base, sets NULL
+int32_t bump_alloc(BumpArena* a, int32_t size, int32_t align);
+void    bump_reset(BumpArena* a);
 
-void    bump_write_f64(BumpArena* a, size_t offset, double val);
-double  bump_read_f64(BumpArena* a, size_t offset);
-void    bump_write_i32(BumpArena* a, size_t offset, int32_t val);
-int32_t bump_read_i32(BumpArena* a, size_t offset);
-void    bump_memcpy(BumpArena* a, size_t dst, size_t src, size_t len);
+void    bump_write_f64(BumpArena* a, int32_t offset, double val);
+double  bump_read_f64(BumpArena* a, int32_t offset);
+void    bump_write_i32(BumpArena* a, int32_t offset, int32_t val);
+int32_t bump_read_i32(BumpArena* a, int32_t offset);
+void    bump_write_byte(BumpArena* a, int32_t offset, int32_t val);
+int32_t bump_read_byte(BumpArena* a, int32_t offset);
+```
+
+**MoonBit side:**
+
+```moonbit
+// Abstract type (not #external) — RC-managed by MoonBit runtime
+priv type BumpPtr
+
+// All operations borrow the pointer — zero RC overhead on hot path
+#borrow(ptr)
+extern "C" fn bump_alloc_(ptr : BumpPtr, size : Int, align : Int) -> Int = "bump_alloc"
 ```
 
 **When to use:** DSP hot paths, any code path where GC pauses are unacceptable.
+The RC overhead is limited to arena creation/destruction (typically once at app
+startup/shutdown). The data buffer itself is `malloc`'d and fully GC-free.
+
+### §5.3.1 Why Hybrid Lifetime (not manual-only or auto-only)
+
+**Why not manual `destroy()` only (current implementation):**
+Domain wrappers like `AudioBufferPool[B, G]` compose `Arena[B, G]`, which holds
+both `CFFIBump` and `CGenStore`. There is no `AudioBufferPool::destroy()`. Users
+would need to reach through internal fields to call `destroy()` — and the library
+doesn't expose that path. As more domain wrappers are added (ASTArena,
+CRDTOpPool), the "remember to destroy" burden compounds. Automatic finalization
+makes the entire wrapper stack safe by default.
+
+**Why not automatic-only (drop `destroy()`):**
+For real-time DSP, deterministic cleanup matters. Audio engine reconfiguration
+(sample rate change, buffer size change) may require tearing down and rebuilding
+the arena at a precise moment. RC finalization timing is non-deterministic —
+the finalizer runs when the last reference is dropped, which may be delayed.
+`destroy()` gives explicit control when needed.
+
+**Why `#borrow` makes this zero-cost on the hot path:**
+All operational FFI calls (`bump_alloc`, `bump_reset`, `bump_write_*`,
+`bump_read_*`) use `#borrow(ptr)`, which borrows the reference without
+incrementing/decrementing the RC. The only RC operations occur at
+`CFFIBump` construction and final destruction — typically once per
+application lifecycle in DSP use cases.
 
 ### §5.4 Implementation B: MbBump (all backends)
 
@@ -622,24 +684,36 @@ Deliverables:
   - Tests: type safety, round-trip serialization, allocator conformance
 ```
 
-### Phase 4 — Domain Integration (in progress)
+### Phase 4 — DSP Domain Integration (in progress)
 
 ```
 Deliverables:
   - AudioBufferPool[B, G] with BufferRef, frame/channel sample access     ✓
   - BumpAllocator byte methods (write_byte/read_byte)                     ✓
-  - ASTArena[MbBump, MbGenStore] in parser
-  - incr generation synchronization
+  - Dogfood in real DSP pipeline
   - Profile and downgrade hot paths to Level 0
 ```
 
-### Phase 5 — Extensions (as needed)
+### Phase 5 — Hybrid C-FFI Lifetime Management
 
 ```
+Deliverables:
+  - moonbit_make_external_object for CFFIBump and CGenStore
+  - Automatic finalization (frees base/data when RC drops to 0)
+  - destroy() retained for deterministic early release
+  - Zero RC overhead on hot path via #borrow
+  - See §5.3 for full design
+```
+
+### Future Improvements (as needed)
+
+```
+  - ASTArena[B, G] (parser, uses write_byte/read_byte for strings)
+  - incr generation synchronization
+  - CRDTOpPool[B, G]
   - GrowableArena[B, G]
   - Code generation for TypedArena boilerplate
   - Memory statistics / visualization
-  - DST integration
 ```
 
 ---

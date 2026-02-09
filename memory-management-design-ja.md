@@ -114,21 +114,40 @@ BumpAllocator (trait)
 ```
 CFFIBump
 │
-│  内部: C側でmalloc確保したバイト列へのopaqueポインタ
-│  メモリ所有権: C側。MoonBitのfinalizerでfree。
-│  GC関与: なし（DSPホットパス向き）
+│  内部: moonbit_make_external_objectで作成されたMoonBitオブジェクト。
+│        BumpArena構造体がペイロードとして埋め込まれる。
+│  メモリ所有権: ハイブリッド方式
+│    - ハンドル自体: MoonBitのRC管理下（参照カウント）
+│    - データバッファ(base): C側malloc。GC関与なし。
+│  自動解放: 最後のMoonBit参照がドロップされると、
+│            ランタイムがfinalize関数を呼び出し、baseをfreeする。
+│  明示的解放: destroy()で即座にbaseを解放可能（決定論的クリーンアップ）。
+│            finalizerはbase==NULLを確認し、二重freeを防ぐ。
+│  DSPホットパス: 全操作が#borrow(ptr)を使用。
+│                RC増減なし。データバッファはGCフリー。
+│
+│  ライフタイムの流れ:
+│    生成: bump_create → moonbit_make_external_object(bump_finalize, sizeof(BumpArena))
+│    使用: alloc/reset/write/read — 全て#borrow、RCオーバーヘッドなし
+│    解放A（自動）: 参照カウント→0 → bump_finalize() → baseをfree
+│    解放B（明示）: destroy() → baseをfree、NULLに設定 → finalizerはスキップ
 │
 │  C関数:
-│    bump_create(capacity: Int) -> Ptr
+│    bump_create(capacity: Int) -> Ptr  // moonbit_make_external_objectを使用
+│    bump_finalize(self: Ptr) -> Unit   // baseのみfree（オブジェクト自体はランタイムが解放）
+│    bump_destroy(ptr: Ptr) -> Unit     // 明示的早期解放
 │    bump_alloc(ptr: Ptr, size: Int, align: Int) -> Int
 │    bump_reset(ptr: Ptr) -> Unit
-│    bump_destroy(ptr: Ptr) -> Unit
-│    bump_write_bytes(ptr: Ptr, offset: Int, data: Ptr, len: Int) -> Unit
-│    bump_read_bytes(ptr: Ptr, offset: Int, out: Ptr, len: Int) -> Unit
 │    bump_write_f64(ptr: Ptr, offset: Int, val: Double) -> Unit
 │    bump_read_f64(ptr: Ptr, offset: Int) -> Double
 │    bump_write_i32(ptr: Ptr, offset: Int, val: Int) -> Unit
 │    bump_read_i32(ptr: Ptr, offset: Int) -> Int
+│    bump_write_byte(ptr: Ptr, offset: Int, val: Int) -> Unit
+│    bump_read_byte(ptr: Ptr, offset: Int) -> Int
+│
+│  MoonBit側:
+│    BumpPtrは#externalではなく通常の抽象型(type BumpPtr)として宣言。
+│    → MoonBitのRC管理対象となり、自動finalizationが機能する。
 ```
 
 ### 3.4 実装B: MbBump (全バックエンド)
@@ -762,21 +781,28 @@ Phase 3: 型付きArena
 ├── TypedRef[T]（パターンAの手動特殊化）
 └── テスト: 型安全性 + アロケータ契約準拠の検証
 
-Phase 4: ドメイン統合 (進行中)
+Phase 4: DSPドメイン統合 (進行中)
 ├── AudioBufferPool (DSP)                               ✓
 │   ├── BufferRef (Refのラッパー)                        ✓
 │   ├── フレーム/チャンネルインデックスのサンプルアクセス ✓
 │   └── コールバック単位のライフサイクル                  ✓
 ├── BumpAllocator バイトメソッド (write_byte/read_byte)  ✓
-├── ASTArena (パーサー)
-├── incr generation連動
+├── 実DSPパイプラインでのドッグフーディング
 └── プロファイリング + Level 0 最適化
 
-Phase 5: 拡張 (必要に応じて)
+Phase 5: ハイブリッドC-FFIライフタイム管理
+├── moonbit_make_external_objectによるCFFIBump/CGenStoreの自動finalization
+├── destroy()は決定論的早期解放として維持
+├── ホットパスは#borrowのまま — RCオーバーヘッドなし
+└── §3.3の設計を実装
+
+将来の改善 (必要に応じて)
+├── ASTArena (パーサー、write_byte/read_byteで文字列格納)
+├── incr generation連動
+├── CRDTOpPool
 ├── GrowableArena
 ├── コード生成によるTypedArena自動化
-├── メモリ使用量の統計/可視化
-└── Deterministic Simulation Testing統合
+└── メモリ使用量の統計/可視化
 ```
 
 ---

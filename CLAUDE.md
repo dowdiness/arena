@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A MoonBit arena allocator library (`dowdiness/arena`) designed for manual memory management in domains where MoonBit's default Perceus (reference-counting) GC is insufficient: real-time DSP, parsers, CRDTs, and incremental computation.
+A MoonBit arena allocator library (`dowdiness/arena`) designed for manual memory management, currently focused on real-time DSP. The generic core (`Arena[B, G]`, `BumpAllocator`, `GenStore`) is domain-agnostic and can support parsers, CRDTs, and incremental computation in the future.
 
-**Phase 4.1 is complete**: trait-abstracted generic arena (`Arena[B, G]`) with both pure MoonBit and C-FFI backends, type-safe wrappers (`Storable` trait, `TypedRef[T]`, specialized arenas `F64Arena`, `I32Arena`, `AudioArena`), and the first domain-specific wrapper `AudioBufferPool[B, G]` for real-time DSP use cases. The root package runs on all backends (wasm-gc, JS, native); the `cffi/` sub-package provides a native-only C-backed implementation. See `ROADMAP.md` for implementation status and next phases.
+**Phase 4 (DSP focus) is in progress**: trait-abstracted generic arena (`Arena[B, G]`) with both pure MoonBit and C-FFI backends, type-safe wrappers (`Storable` trait, `TypedRef[T]`, specialized arenas `F64Arena`, `I32Arena`, `AudioArena`), and the DSP domain wrapper `AudioBufferPool[B, G]`. Next: hybrid C-FFI lifetime management, then dogfooding in a real DSP pipeline. The root package runs on all backends (wasm-gc, JS, native); the `cffi/` sub-package provides a native-only C-backed implementation. See `ROADMAP.md` for implementation status.
 
 ## Build & Development Commands
 
@@ -42,10 +42,10 @@ Use `moon coverage analyze > uncovered.log` to check test coverage.
 
 The library follows a 3-layer architecture with an additional domain layer on top:
 
-- **Layer 1 (Physical Memory)** [Phase 2: implemented]: `BumpAllocator` trait with two implementations — `MbBump` (pure MoonBit, all backends) and `CFFIBump` (C-FFI, native only). Overflow-safe alignment and bounds-checked typed read/write (int32, double, byte). Contract is explicit: successful `alloc` must imply writable allocated range until `reset`.
+- **Layer 1 (Physical Memory)** [Phase 2: implemented]: `BumpAllocator` trait with two implementations — `MbBump` (pure MoonBit, all backends) and `CFFIBump` (C-FFI, native only). Overflow-safe alignment and bounds-checked typed read/write (int32, double, byte). Contract is explicit: successful `alloc` must imply writable allocated range until `reset`. **Planned**: hybrid lifetime management for C-FFI via `moonbit_make_external_object` (automatic finalization + optional deterministic `destroy()`).
 - **Layer 2 (Generic Arena)** [Phase 2: implemented]: `Arena[B, G]` generic struct with trait-constrained type parameters. `GenStore` trait with `MbGenStore` (pure MoonBit) and `CGenStore` (C-FFI, native only). Generational indices (`Ref`) for use-after-reset detection. O(1) reset via lazy invalidation. MoonBit monomorphizes the generics — zero dispatch overhead.
 - **Layer 3 (Typed Arena)** [Phase 3: implemented]: `Storable` trait for fixed-size serialization. `TypedRef[T]` phantom-typed references. Manually specialized arenas (`F64Arena[B, G]`, `I32Arena[B, G]`, `AudioArena[B, G]`) bypass Storable for zero-copy access via Arena's typed accessors. Typed `alloc` aborts on post-alloc write failure (contract violation); `set` remains recoverable (`Bool`).
-- **Domain Layer** [Phase 4: in progress]: `AudioBufferPool[B, G]` (DSP, implemented) — multi-sample buffer pool with `BufferRef`, frame/channel-indexed sample access, per-callback lifecycle. Remaining: `ASTArena` (parser), `CRDTOpPool`, `MemoTable` (incr)
+- **Domain Layer** [Phase 4: DSP focus]: `AudioBufferPool[B, G]` (implemented) — multi-sample buffer pool with `BufferRef`, frame/channel-indexed sample access, per-callback lifecycle. Planned: hybrid C-FFI lifetime management via `moonbit_make_external_object`. Other domain wrappers (ASTArena, CRDTOpPool, MemoTable) deferred to future improvements.
 
 Backend switching uses generic type parameters with monomorphization: `Arena[MbBump, MbGenStore]` (all MoonBit, all backends) vs `Arena[CFFIBump, CGenStore]` (C-FFI, native only). Constructors: `Arena::new` (convenience, MbBump), `cffi.new_arena` (convenience, CFFIBump), `Arena::new_with` (generic, any backend).
 
