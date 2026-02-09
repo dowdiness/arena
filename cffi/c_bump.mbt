@@ -40,6 +40,14 @@ extern "C" fn bump_write_f64_(ptr : BumpPtr, offset : Int, val : Double) = "bump
 extern "C" fn bump_read_f64_(ptr : BumpPtr, offset : Int) -> Double = "bump_read_f64"
 
 ///|
+#borrow(ptr)
+extern "C" fn bump_write_byte_(ptr : BumpPtr, offset : Int, val : Int) -> Unit = "bump_write_byte"
+
+///|
+#borrow(ptr)
+extern "C" fn bump_read_byte_(ptr : BumpPtr, offset : Int) -> Int = "bump_read_byte"
+
+///|
 pub struct CFFIBump {
   priv ptr : BumpPtr
   priv capacity_ : Int
@@ -131,4 +139,21 @@ pub impl @arena.BumpAllocator for CFFIBump with read_double(self, offset) {
     return None
   }
   Some(bump_read_f64_(self.ptr, offset))
+}
+
+///|
+pub impl @arena.BumpAllocator for CFFIBump with write_byte(self, offset, val) {
+  if self.destroyed || offset < 0 || offset >= self.capacity_ {
+    return false
+  }
+  bump_write_byte_(self.ptr, offset, val.to_int())
+  true
+}
+
+///|
+pub impl @arena.BumpAllocator for CFFIBump with read_byte(self, offset) {
+  if self.destroyed || offset < 0 || offset >= self.capacity_ {
+    return None
+  }
+  Some(bump_read_byte_(self.ptr, offset).to_byte())
 }

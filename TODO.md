@@ -165,9 +165,20 @@ Traits stay in root package; C-FFI in `cffi/` sub-package.
 
 ### 4.1 AudioBufferPool
 
-- [ ] Define `AudioBufferPool` struct
-- [ ] Implement per-callback lifecycle (reset/alloc/process)
-- [ ] Integration test simulating audio callback pattern
+- [x] Add `write_byte`/`read_byte` to `BumpAllocator` trait
+- [x] Implement `write_byte`/`read_byte` for `MbBump`
+- [x] Implement `write_byte`/`read_byte` for `CFFIBump` (with C stubs)
+- [x] Define `BufferRef` struct wrapping `Ref` (derive Eq, Show)
+- [x] Define `AudioBufferPool[B, G]` struct
+- [x] Implement `AudioBufferPool::new` and `AudioBufferPool::new_with` (overflow-safe)
+- [x] Implement `alloc`, `write_sample`, `read_sample`, `reset`, `is_valid`, getters
+- [x] Implement per-callback lifecycle (reset/alloc/process)
+- [x] BufferRef whitebox tests (Eq, Show)
+- [x] AudioBufferPool blackbox tests (MbBump): alloc, stereo/mono round-trip, OOB frame/channel, stale ref, capacity, multi-cycle, multi-buffer independence, per-callback lifecycle
+- [x] AudioBufferPool cffi tests (CFFIBump/CGenStore): round-trip, overwrite, stale ref, capacity, multi-buffer
+- [x] MbBump byte read/write tests
+- [x] CFFIBump byte read/write + destroy safety tests
+- [x] All 88 tests pass on wasm-gc, 144 on native
 
 ### 4.2 ASTArena
 

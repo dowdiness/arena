@@ -121,3 +121,21 @@ test "MbBump::capacity" {
   let bump = MbBump::new(256)
   inspect(bump.capacity(), content="256")
 }
+
+///|
+test "MbBump::write_byte/read_byte round-trip" {
+  let bump = MbBump::new(4)
+  inspect(bump.write_byte(0, b'\x42'), content="true")
+  inspect(bump.read_byte(0), content="Some(b'\\x42')")
+  inspect(bump.write_byte(3, b'\xFF'), content="true")
+  inspect(bump.read_byte(3), content="Some(b'\\xFF')")
+}
+
+///|
+test "MbBump::write_byte/read_byte rejects out-of-bounds" {
+  let bump = MbBump::new(4)
+  inspect(bump.write_byte(-1, b'\x00'), content="false")
+  inspect(bump.read_byte(-1), content="None")
+  inspect(bump.write_byte(4, b'\x00'), content="false")
+  inspect(bump.read_byte(4), content="None")
+}

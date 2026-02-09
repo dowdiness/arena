@@ -77,6 +77,21 @@ impl BumpAllocator for WriteFailBump with read_double(self, offset) {
 }
 
 ///|
+impl BumpAllocator for WriteFailBump with write_byte(self, offset, val) {
+  ignore(self)
+  ignore(offset)
+  ignore(val)
+  false
+}
+
+///|
+impl BumpAllocator for WriteFailBump with read_byte(self, offset) {
+  ignore(self)
+  ignore(offset)
+  None
+}
+
+///|
 test "panic F64Arena::alloc aborts on backend contract violation" {
   let arena = F64Arena::new_with(WriteFailBump::new(64), MbGenStore::new(4), 4)
   arena.alloc(3.14) |> ignore

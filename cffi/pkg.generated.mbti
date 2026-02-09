@@ -1,11 +1,29 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "dowdiness/arena/cffi"
 
+import {
+  "dowdiness/arena",
+}
+
 // Values
+pub fn new_arena(Int, Int) -> @arena.Arena[CFFIBump, CGenStore]
 
 // Errors
 
 // Types and methods
+pub struct CFFIBump {
+  // private fields
+}
+pub fn CFFIBump::destroy(Self) -> Unit
+pub fn CFFIBump::new(Int) -> Self
+pub impl @arena.BumpAllocator for CFFIBump
+
+pub struct CGenStore {
+  // private fields
+}
+pub fn CGenStore::destroy(Self) -> Unit
+pub fn CGenStore::new(Int) -> Self
+pub impl @arena.GenStore for CGenStore
 
 // Type aliases
 

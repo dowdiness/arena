@@ -18,4 +18,6 @@ pub(open) trait BumpAllocator {
   read_int32(Self, Int) -> Int?
   write_double(Self, Int, Double) -> Bool
   read_double(Self, Int) -> Double?
+  write_byte(Self, Int, Byte) -> Bool
+  read_byte(Self, Int) -> Byte?
 }

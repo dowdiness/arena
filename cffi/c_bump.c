@@ -72,3 +72,11 @@ double bump_read_f64(BumpArena* a, int32_t offset) {
   memcpy(&val, a->base + offset, 8);
   return val;
 }
+
+void bump_write_byte(BumpArena* a, int32_t offset, int32_t val) {
+  a->base[offset] = (char)(unsigned char)val;
+}
+
+int32_t bump_read_byte(BumpArena* a, int32_t offset) {
+  return (int32_t)(unsigned char)a->base[offset];
+}

@@ -104,3 +104,20 @@ pub impl BumpAllocator for MbBump with read_double(self, offset) {
     (b7 << 56)
   Some(bits.reinterpret_as_int64().reinterpret_as_double())
 }
+
+///|
+pub impl BumpAllocator for MbBump with write_byte(self, offset, val) {
+  if offset < 0 || offset >= self.data.length() {
+    return false
+  }
+  self.data[offset] = val
+  true
+}
+
+///|
+pub impl BumpAllocator for MbBump with read_byte(self, offset) {
+  if offset < 0 || offset >= self.data.length() {
+    return None
+  }
+  Some(self.data[offset])
+}

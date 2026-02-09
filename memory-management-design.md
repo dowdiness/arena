@@ -128,6 +128,12 @@ trait BumpAllocator {
 
   used(Self) -> Int
   // Bytes allocated since last reset.
+
+  write_byte(Self, Int, Byte) -> Bool
+  // Write a single byte at offset. Returns false on OOB.
+
+  read_byte(Self, Int) -> Byte?
+  // Read a single byte at offset. Returns None on OOB.
 }
 ```
 
@@ -616,11 +622,12 @@ Deliverables:
   - Tests: type safety, round-trip serialization, allocator conformance
 ```
 
-### Phase 4 — Domain Integration
+### Phase 4 — Domain Integration (in progress)
 
 ```
 Deliverables:
-  - AudioBufferPool[CFFIBump, CGenStore] in DSP pipeline
+  - AudioBufferPool[B, G] with BufferRef, frame/channel sample access     ✓
+  - BumpAllocator byte methods (write_byte/read_byte)                     ✓
   - ASTArena[MbBump, MbGenStore] in parser
   - incr generation synchronization
   - Profile and downgrade hot paths to Level 0
@@ -654,7 +661,8 @@ Deliverables:
 | `Storable` | L3 | trait | Fixed-size serialization to/from bytes |
 | `TypedRef[T]` | L3 | struct | Type-tagged arena reference |
 | `F64Arena[B, G]` | L3 | struct | Double-specialized typed arena |
-| `AudioBufferPool[B, G]` | Domain | struct | DSP buffer pool |
+| `BufferRef` | Domain | struct | Audio buffer reference (wraps Ref) |
+| `AudioBufferPool[B, G]` | Domain | struct | DSP buffer pool with frame/channel sample access |
 | `ASTArena[B, G]` | Domain | struct | Parser AST node arena |
 | `CRDTOpPool[B, G]` | Domain | struct | CRDT operation batch pool |
 | `GrowableArena[B, G]` | Extension | struct | Chunk-chained growable arena |
@@ -664,7 +672,7 @@ Deliverables:
 
 | Trait | Methods | Implementors |
 |-------|---------|-------------|
-| `BumpAllocator` | `alloc`, `reset`, `capacity`, `used` | `MbBump`, `CFFIBump` |
+| `BumpAllocator` | `alloc`, `reset`, `capacity`, `used`, `write_byte`, `read_byte` | `MbBump`, `CFFIBump` |
 | `GenStore` | `get`, `set`, `length` | `MbGenStore`, `CGenStore` |
 | `Storable` | `byte_size`, `write_bytes`, `read_bytes` | `Double`, `Int`, user types |
 

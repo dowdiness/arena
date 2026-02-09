@@ -100,6 +100,13 @@ BumpAllocator (trait)
 │    - reset()後、used() == 0
 │    - alloc()が返すオフセットはalignの倍数
 │    - alloc()成功後、そのスロット範囲のwrite/readはresetまで成功する
+│
+│  バイトアクセス:
+│    write_byte(offset: Int, val: Byte) -> Bool
+│      指定オフセットに1バイト書き込み。範囲外ならfalse。
+│
+│    read_byte(offset: Int) -> Byte?
+│      指定オフセットから1バイト読み出し。範囲外ならNone。
 ```
 
 ### 3.3 実装A: CFFIBump (native専用)
@@ -755,8 +762,12 @@ Phase 3: 型付きArena
 ├── TypedRef[T]（パターンAの手動特殊化）
 └── テスト: 型安全性 + アロケータ契約準拠の検証
 
-Phase 4: ドメイン統合
-├── AudioBufferPool (DSP)
+Phase 4: ドメイン統合 (進行中)
+├── AudioBufferPool (DSP)                               ✓
+│   ├── BufferRef (Refのラッパー)                        ✓
+│   ├── フレーム/チャンネルインデックスのサンプルアクセス ✓
+│   └── コールバック単位のライフサイクル                  ✓
+├── BumpAllocator バイトメソッド (write_byte/read_byte)  ✓
 ├── ASTArena (パーサー)
 ├── incr generation連動
 └── プロファイリング + Level 0 最適化
@@ -787,7 +798,8 @@ Phase 5: 拡張 (必要に応じて)
 | `TypedArena[T]` | L3 | struct | 型Tに特化したArena |
 | `BumpImpl` | 構成 | enum | BumpAllocator実装の切り替え |
 | `GenStoreImpl` | 構成 | enum | GenStore実装の切り替え |
-| `AudioBufferPool` | ドメイン | struct | DSP用バッファプール |
+| `BufferRef` | ドメイン | struct | オーディオバッファ参照 (Refのラッパー) |
+| `AudioBufferPool` | ドメイン | struct | DSP用バッファプール (フレーム/チャンネルサンプルアクセス) |
 | `ASTArena` | ドメイン | struct | パーサー用ASTノードアリーナ |
 | `GrowableArena` | 拡張 | struct | チャンク連鎖の成長可能Arena |
 

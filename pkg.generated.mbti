@@ -39,6 +39,21 @@ pub fn[B : BumpAllocator, G : GenStore] AudioArena::new_with(B, G, Int) -> Self[
 pub fn[B : BumpAllocator, G] AudioArena::reset(Self[B, G]) -> Unit
 pub fn[B : BumpAllocator, G : GenStore] AudioArena::set(Self[B, G], TypedRef[AudioFrame], AudioFrame) -> Bool
 
+pub struct AudioBufferPool[B, G] {
+  arena : Arena[B, G]
+  frames_per_buffer : Int
+  channels : Int
+}
+pub fn[B : BumpAllocator, G : GenStore] AudioBufferPool::alloc(Self[B, G]) -> BufferRef?
+pub fn[B, G] AudioBufferPool::get_channels(Self[B, G]) -> Int
+pub fn[B, G] AudioBufferPool::get_frames_per_buffer(Self[B, G]) -> Int
+pub fn[B, G : GenStore] AudioBufferPool::is_valid(Self[B, G], BufferRef) -> Bool
+pub fn AudioBufferPool::new(Int, Int, Int) -> Self[MbBump, MbGenStore]
+pub fn[B : BumpAllocator, G : GenStore] AudioBufferPool::new_with(B, G, Int, Int, Int) -> Self[B, G]
+pub fn[B : BumpAllocator, G : GenStore] AudioBufferPool::read_sample(Self[B, G], BufferRef, Int, Int) -> Double?
+pub fn[B : BumpAllocator, G] AudioBufferPool::reset(Self[B, G]) -> Unit
+pub fn[B : BumpAllocator, G : GenStore] AudioBufferPool::write_sample(Self[B, G], BufferRef, Int, Int, Double) -> Bool
+
 pub struct AudioFrame {
   left : Double
   right : Double
@@ -47,6 +62,12 @@ pub fn AudioFrame::new(Double, Double) -> Self
 pub impl Storable for AudioFrame
 pub impl Eq for AudioFrame
 pub impl Show for AudioFrame
+
+pub struct BufferRef {
+  inner : Ref
+}
+pub impl Eq for BufferRef
+pub impl Show for BufferRef
 
 pub struct F64Arena[B, G] {
   arena : Arena[B, G]
@@ -108,6 +129,8 @@ pub(open) trait BumpAllocator {
   read_int32(Self, Int) -> Int?
   write_double(Self, Int, Double) -> Bool
   read_double(Self, Int) -> Double?
+  write_byte(Self, Int, Byte) -> Bool
+  read_byte(Self, Int) -> Byte?
 }
 
 pub(open) trait GenStore {

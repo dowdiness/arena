@@ -27,8 +27,9 @@ arena.is_valid(ref)  // false — stale ref detected
 - **Generational indices** — `Ref` carries a generation tag for use-after-reset detection
 - **O(1) reset** — lazy invalidation via generation counter, no per-slot cleanup
 - **Typed arenas** — `F64Arena`, `I32Arena`, `AudioArena` with phantom-typed `TypedRef[T]` references
+- **AudioBufferPool** — DSP buffer pool with frame/channel-indexed sample access and per-callback lifecycle
 - **Storable trait** — user-extensible byte-array serialization for custom types
-- **Typed read/write** — `Int32` and `Double` access with bounds checking
+- **Typed read/write** — `Int32`, `Double`, and `Byte` access with bounds checking
 - **Overflow-safe arithmetic** — all allocation and bounds checks handle integer overflow
 - **Strict allocator contract** — typed arenas abort on post-alloc write failures (contract violation)
 - **Recoverable API failures** — stale/invalid access returns `Option`/`Bool`
@@ -54,7 +55,7 @@ arena.is_valid(ref)  // false — stale ref detected
 
 | Trait | Methods | Implementations |
 |-------|---------|-----------------|
-| `BumpAllocator` | alloc, reset, capacity, used, write/read int32/double | `MbBump`, `CFFIBump` |
+| `BumpAllocator` | alloc, reset, capacity, used, write/read int32/double/byte | `MbBump`, `CFFIBump` |
 | `GenStore` | get, set, length | `MbGenStore`, `CGenStore` |
 | `Storable` | byte_size, write_bytes, read_bytes | `Double`, `Int`, `AudioFrame` |
 
@@ -79,6 +80,26 @@ write fails after a successful alloc (contract violation). `get`/`set` remain re
 | `TypedRef[T]` | `inner : Ref` (phantom-typed) |
 | `AudioFrame` | `left : Double`, `right : Double` |
 
+### AudioBufferPool[B, G]
+
+DSP buffer pool for real-time audio. Each buffer holds `frames_per_buffer * channels` interleaved `Double` samples.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `AudioBufferPool::new` | `(Int, Int, Int) -> AudioBufferPool[MbBump, MbGenStore]` | Create pool (frames_per_buffer, channels, buffer_count) |
+| `AudioBufferPool::new_with` | `[B, G](B, G, Int, Int, Int) -> AudioBufferPool[B, G]` | Create with custom backends |
+| `AudioBufferPool::alloc` | `(Self) -> BufferRef?` | Allocate one buffer (no initialization) |
+| `AudioBufferPool::write_sample` | `(Self, BufferRef, Int, Int, Double) -> Bool` | Write sample at (frame, channel) |
+| `AudioBufferPool::read_sample` | `(Self, BufferRef, Int, Int) -> Double?` | Read sample at (frame, channel) |
+| `AudioBufferPool::reset` | `(Self) -> Unit` | Invalidate all BufferRefs (O(1)) |
+| `AudioBufferPool::is_valid` | `(Self, BufferRef) -> Bool` | Check if BufferRef is still valid |
+
+| Type | Fields |
+|------|--------|
+| `BufferRef` | `inner : Ref` (audio buffer reference) |
+
+Per-callback lifecycle: `reset()` → `alloc()` → `write_sample()` → `read_sample()` → callback returns.
+
 ### cffi (native only)
 
 | Function | Signature | Description |
@@ -93,8 +114,8 @@ write fails after a successful alloc (contract violation). `get`/`set` remain re
 moon check                    # Typecheck (wasm-gc)
 moon check --target native    # Typecheck including cffi
 moon build                    # Build
-moon test                     # Run root tests (71 tests, wasm-gc)
-moon test --target native     # Run all tests including cffi (119 tests)
+moon test                     # Run root tests (88 tests, wasm-gc)
+moon test --target native     # Run all tests including cffi (144 tests)
 moon bench                    # Run MbBump benchmarks (wasm-gc)
 moon bench --target native    # Run all benchmarks including CFFIBump
 moon run cmd/main             # Run demo
@@ -128,7 +149,7 @@ See `ROADMAP.md` §2.x for full benchmark results and methodology.
 
 ## Status
 
-Phase 3 (Typed Arena) is complete. See `ROADMAP.md` for the full implementation plan including domain integrations.
+Phase 4.1 (AudioBufferPool) is complete. See `ROADMAP.md` for the full implementation plan including remaining domain integrations.
 
 ## License
 

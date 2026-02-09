@@ -17,7 +17,8 @@
     "bench_bump_test.mbt": ["native"],
     "bench_gen_store_test.mbt": ["native"],
     "bench_arena_test.mbt": ["native"],
-    "typed_arena_test.mbt": ["native"]
+    "typed_arena_test.mbt": ["native"],
+    "audio_buffer_pool_test.mbt": ["native"]
   },
   "native-stub": ["c_bump.c", "c_gen.c"]
 }

@@ -4,22 +4,24 @@ Based on the design in `memory-management-design.md` (§12).
 
 ## Current State
 
-**Phase 3 is complete.** Type-safe wrappers are now implemented on top of the
-generic arena. The `Storable` trait provides byte-array serialization for
-user-defined types. `TypedRef[T]` adds phantom-typed references with zero
-runtime cost. Three manually specialized arenas (`F64Arena`, `I32Arena`,
-`AudioArena`) provide type-safe alloc/get/set using Arena's typed accessors
-directly (no byte-array intermediary). 119 tests passing on native, 71 on
-wasm-gc. Module: `dowdiness/arena` (Apache-2.0).
+**Phase 4.1 (AudioBufferPool) is complete.** The first domain-specific wrapper
+is implemented on top of the generic arena. `AudioBufferPool[B, G]` provides
+multi-sample buffer management for real-time DSP: `BufferRef`-indexed buffers
+with frame/channel sample access, overflow-safe construction, and per-callback
+lifecycle (reset → alloc → write → read). The `BumpAllocator` trait now also
+includes byte-level read/write (`write_byte`/`read_byte`) for future ASTArena
+string storage. 144 tests passing on native, 88 on wasm-gc. Module:
+`dowdiness/arena` (Apache-2.0).
 
-Implemented: `BumpAllocator` trait, `GenStore` trait, `MbBump`, `MbGenStore`,
-`CFFIBump` (native), `CGenStore` (native), `Ref`, `Arena[B, G]` with typed
-read/write, generational stale-ref detection, O(1) reset, `Storable` trait
-(Double, Int, AudioFrame), `TypedRef[T]`, `F64Arena[B, G]`, `I32Arena[B, G]`,
-`AudioArena[B, G]`, `AudioFrame`, comprehensive input validation, FFI safety
-guards, strict typed-arena contract enforcement (abort on post-alloc write
-failure), allocator conformance tests, and benchmark suite (12 benchmarks on
-wasm-gc, 24 on native).
+Implemented: `BumpAllocator` trait (with byte methods), `GenStore` trait,
+`MbBump`, `MbGenStore`, `CFFIBump` (native), `CGenStore` (native), `Ref`,
+`Arena[B, G]` with typed read/write, generational stale-ref detection, O(1)
+reset, `Storable` trait (Double, Int, AudioFrame), `TypedRef[T]`,
+`F64Arena[B, G]`, `I32Arena[B, G]`, `AudioArena[B, G]`, `AudioFrame`,
+`BufferRef`, `AudioBufferPool[B, G]`, comprehensive input validation, FFI
+safety guards, strict typed-arena contract enforcement (abort on post-alloc
+write failure), allocator conformance tests, and benchmark suite (12 benchmarks
+on wasm-gc, 24 on native).
 
 ---
 
@@ -195,7 +197,7 @@ originally planned enum dispatch approach.
 ### 2a — Traits & Generic Arena (implemented)
 
 - Traits stay in root package (no sub-package restructuring needed)
-- `BumpAllocator` trait (`bump_allocator.mbt`): alloc, reset, capacity, used, write_int32, read_int32, write_double, read_double
+- `BumpAllocator` trait (`bump_allocator.mbt`): alloc, reset, capacity, used, write_int32, read_int32, write_double, read_double, write_byte, read_byte
 - `GenStore` trait (`gen_store_trait.mbt`): get, set, length
 - `MbBump` implements `BumpAllocator` via trait impl blocks
 - `MbGenStore` implements `GenStore` via trait impl blocks
@@ -408,17 +410,78 @@ arena/
 
 **Goal:** Domain-specific wrappers for real use cases.
 
-### 4.1 AudioBufferPool (§8.1)
+### 4.1 AudioBufferPool (§8.1) — implemented
 
-- Struct wrapping Arena with frames_per_buffer and channels config
-- Per-callback lifecycle: reset → alloc → process → return
-- Integration test simulating audio callback pattern
+`AudioBufferPool[B, G]` wraps `Arena[B, G]` with DSP-specific semantics:
+multi-sample buffers indexed by frame and channel, with `BufferRef` references.
+
+**BumpAllocator byte methods (prep for 4.2):**
+- Added `write_byte(Self, Int, Byte) -> Bool` and `read_byte(Self, Int) -> Byte?` to `BumpAllocator` trait
+- Implemented for `MbBump` (bounds-checked byte array access) and `CFFIBump` (with C stubs `bump_write_byte`/`bump_read_byte`)
+
+**BufferRef:**
+- Newtype wrapping `Ref` (not `TypedRef[T]` — audio buffers are multi-sample containers, not single typed values)
+- Derives `Eq` and `Show`
+
+**AudioBufferPool[B, G]:**
+
+```
+struct AudioBufferPool[B, G] {
+  arena             : Arena[B, G]
+  frames_per_buffer : Int
+  channels          : Int
+}
+```
+
+Key design decisions:
+- **Interleaved sample layout**: `field_offset = (frame * channels + channel) * 8`. Each sample is a `Double` (8 bytes)
+- **alloc() returns `BufferRef?`** with no initial value — unlike typed arenas that initialize on alloc. Audio buffers are large and will be written by DSP processing
+- **Sample access**: `write_sample(bref, frame, channel, value) -> Bool` and `read_sample(bref, frame, channel) -> Double?` with bounds checking on frame and channel indices
+- **Constructor overflow safety**: detects `frames_per_buffer * channels * 8` overflow, degrades to zero-capacity
+
+Methods:
+- `AudioBufferPool::new(frames_per_buffer, channels, buffer_count)` — MbBump convenience constructor
+- `AudioBufferPool::new_with(bump, gen_store, frames_per_buffer, channels, max_buffers)` — generic constructor
+- `AudioBufferPool::alloc(self) -> BufferRef?`
+- `AudioBufferPool::write_sample(self, bref, frame, channel, value) -> Bool`
+- `AudioBufferPool::read_sample(self, bref, frame, channel) -> Double?`
+- `AudioBufferPool::reset(self)` / `is_valid(self, bref)` / `get_frames_per_buffer(self)` / `get_channels(self)`
+
+Tests (17 new wasm-gc + 25 new native):
+- BufferRef Eq/Show whitebox tests (3)
+- AudioBufferPool blackbox tests with MbBump: alloc, stereo/mono round-trip, OOB frame/channel, stale ref, capacity, multi-cycle, multi-buffer independence, per-callback lifecycle, getters, overflow constructor (12)
+- AudioBufferPool cffi tests with CFFIBump/CGenStore (5)
+- MbBump byte read/write round-trip + bounds tests (2)
+- CFFIBump byte read/write round-trip + bounds + destroy safety tests (3)
+
+Total: 88 tests wasm-gc, 144 tests native.
+
+### File layout (Phase 4.1 additions)
+
+```
+arena/
+├── buffer_ref.mbt                  # BufferRef struct wrapping Ref
+├── buffer_ref_wbtest.mbt           # BufferRef Eq/Show whitebox tests
+├── audio_buffer_pool.mbt           # AudioBufferPool[B, G]
+├── audio_buffer_pool_test.mbt      # AudioBufferPool blackbox tests (MbBump)
+├── cffi/
+│   └── audio_buffer_pool_test.mbt  # AudioBufferPool tests (CFFIBump/CGenStore)
+```
+
+Modified files:
+- `bump_allocator.mbt` — added `write_byte`, `read_byte` to trait
+- `mb_bump.mbt` — byte method implementations
+- `cffi/c_bump.c` — C stubs for byte read/write
+- `cffi/c_bump.mbt` — CFFIBump byte method implementations
+- `mb_bump_test.mbt` — byte method tests
+- `cffi/c_bump_test.mbt` — CFFIBump byte method + destroy safety tests
 
 ### 4.2 ASTArena (§8.2)
 
 - Dual-arena (node_arena + string_arena)
 - StringRef for variable-length data
 - Phase lifecycle: parse → convert → reset
+- Uses `write_byte`/`read_byte` for string storage
 
 ### 4.3 incr generation synchronization
 
@@ -457,3 +520,8 @@ Low priority. Implement as needed.
 | Specialized arenas bypass Storable | Direct typed accessors | Zero-copy; avoids unnecessary byte-array intermediaries for built-in types |
 | TypedRef field name | `inner` (not `ref`) | `ref` is a reserved keyword in MoonBit |
 | AudioFrame slot layout | left at offset 0, right at offset 8 | Natural field order, two contiguous Doubles |
+| BufferRef type | Newtype over `Ref` (not `TypedRef[T]`) | Audio buffers are multi-sample containers, not single typed values |
+| AudioBufferPool alloc | No initial value written | Buffers are large; DSP will overwrite all samples anyway |
+| AudioBufferPool alloc failure | Returns `None` (no abort) | No post-alloc write to fail, unlike typed arenas |
+| Sample layout | Interleaved: `(frame * channels + channel) * 8` | Natural for per-frame DSP processing |
+| BumpAllocator byte methods | Added `write_byte`/`read_byte` to trait | Prepares for ASTArena string storage (Phase 4.2) |

@@ -129,3 +129,30 @@ test "CFFIBump::new zero capacity is safe" {
   inspect(bump.alloc(1, 1), content="None")
   inspect(bump.used(), content="0")
 }
+
+///|
+test "CFFIBump::write_byte/read_byte round-trip" {
+  let bump = CFFIBump::new(4)
+  inspect(bump.write_byte(0, b'\x42'), content="true")
+  inspect(bump.read_byte(0), content="Some(b'\\x42')")
+  inspect(bump.write_byte(3, b'\xFF'), content="true")
+  inspect(bump.read_byte(3), content="Some(b'\\xFF')")
+}
+
+///|
+test "CFFIBump::write_byte/read_byte rejects out-of-bounds" {
+  let bump = CFFIBump::new(4)
+  inspect(bump.write_byte(-1, b'\x00'), content="false")
+  inspect(bump.read_byte(-1), content="None")
+  inspect(bump.write_byte(4, b'\x00'), content="false")
+  inspect(bump.read_byte(4), content="None")
+}
+
+///|
+test "CFFIBump::byte methods are safe after destroy" {
+  let bump = CFFIBump::new(4)
+  bump.write_byte(0, b'\x42') |> ignore
+  bump.destroy()
+  inspect(bump.write_byte(0, b'\x42'), content="false")
+  inspect(bump.read_byte(0), content="None")
+}
